@@ -43,6 +43,11 @@ pub struct SocialCountApp {
     is_compact: bool,
     pre_compact_size: Option<Vec2>,
     resize_drag: Option<ResizeDragState>,
+    show_profile_manager: bool,
+    new_channel_input: String,
+    editing_channel_idx: Option<usize>,
+    editing_channel_input: String,
+    profile_error_msg: Option<String>,
 }
 
 impl SocialCountApp {
@@ -82,6 +87,11 @@ impl SocialCountApp {
             is_compact,
             pre_compact_size,
             resize_drag: None,
+            show_profile_manager: false,
+            new_channel_input: String::new(),
+            editing_channel_idx: None,
+            editing_channel_input: String::new(),
+            profile_error_msg: None,
         };
 
         app.trigger_refresh();
@@ -281,7 +291,43 @@ impl eframe::App for SocialCountApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
 
+        // Rilevamento click destro per accedere alla gestione profili (CRUD)
+        if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+            self.show_profile_manager = !self.show_profile_manager;
+            self.profile_error_msg = None;
+            self.editing_channel_idx = None;
+            if self.show_profile_manager {
+                if self.is_compact {
+                    let manager_size = Vec2::new(350.0, 440.0);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(manager_size));
+                }
+            } else if self.is_compact {
+                let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+            }
+        }
 
+        // Calcolo dimensione target e stabilizzazione anti-ballooning quando si sposta tra schermi (es. schermo a sinistra)
+        let target_size = if self.show_profile_manager {
+            if self.is_compact {
+                Vec2::new(350.0, 440.0)
+            } else {
+                Vec2::new(self.config.window_width.max(340.0), self.config.window_height.max(420.0))
+            }
+        } else if self.is_compact {
+            let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
+            Vec2::new(205.0, compact_h)
+        } else {
+            Vec2::new(self.config.window_width.max(280.0), self.config.window_height.max(160.0))
+        };
+
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        if self.resize_drag.is_none() && !pointer_down {
+            let current_size = ctx.screen_rect().size();
+            if (current_size.x - target_size.x).abs() > 4.0 || (current_size.y - target_size.y).abs() > 4.0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+            }
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(Color32::TRANSPARENT).inner_margin(Margin::same(4.0)))
@@ -318,7 +364,7 @@ impl eframe::App for SocialCountApp {
                     }
                 };
 
-                let container_margin = if self.is_compact {
+                let container_margin = if self.is_compact && !self.show_profile_manager {
                     Margin::symmetric(5.0, 3.0)
                 } else {
                     Margin::symmetric(14.0, 12.0)
@@ -328,62 +374,66 @@ impl eframe::App for SocialCountApp {
                     .fill(container_bg)
                     .stroke(container_stroke)
                     .shadow(container_shadow)
-                    .rounding(Rounding::same(if self.is_compact { 8.0 } else { 18.0 }))
+                    .rounding(Rounding::same(if self.is_compact && !self.show_profile_manager { 8.0 } else { 18.0 }))
                     .inner_margin(container_margin)
                     .show(ui, |ui| {
-                        // 1. HEADER (differenziato tra vista normale e vista ultra-compatta)
-                        if self.is_compact {
-                            self.render_header_compact(ui, ctx);
+                        if self.show_profile_manager {
+                            self.render_profile_manager(ui, ctx, alpha_factor);
                         } else {
-                            self.render_header(ui, ctx);
-                        }
-
-                        // Linea divisoria superiore (visibile solo se non compatta e opacità > 0)
-                        let sep_alpha = (18.0 * alpha_factor).round() as u8;
-                        if !self.is_compact {
-                            ui.add_space(8.0);
-                            let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-                            if sep_alpha > 0 {
-                                ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                            // 1. HEADER (differenziato tra vista normale e vista ultra-compatta)
+                            if self.is_compact {
+                                self.render_header_compact(ui, ctx);
+                            } else {
+                                self.render_header(ui, ctx);
                             }
-                            ui.add_space(8.0);
-                        } else {
-                            ui.add_space(2.0);
-                        }
 
-                        // 2. LISTA DEI CANALI
-                        if self.is_compact {
-                            // In modalità compatta non serve scrollbar: layout ultra-compatto diretto
-                            for channel in &self.channels {
-                                self.render_channel_card_compact(ui, channel);
+                            // Linea divisoria superiore (visibile solo se non compatta e opacità > 0)
+                            let sep_alpha = (18.0 * alpha_factor).round() as u8;
+                            if !self.is_compact {
+                                ui.add_space(8.0);
+                                let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+                                if sep_alpha > 0 {
+                                    ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                                }
+                                ui.add_space(8.0);
+                            } else {
                                 ui.add_space(2.0);
                             }
-                        } else {
-                            let footer_height = 26.0_f32;
-                            let scroll_height = (ui.available_height() - footer_height - 12.0_f32).max(60.0_f32);
 
-                            egui::ScrollArea::vertical()
-                                .max_height(scroll_height)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    for channel in &self.channels {
-                                        self.render_channel_card(ui, channel);
-                                        ui.add_space(8.0);
-                                    }
-                                });
+                            // 2. LISTA DEI CANALI
+                            if self.is_compact {
+                                // In modalità compatta non serve scrollbar: layout ultra-compatto diretto
+                                for channel in &self.channels {
+                                    self.render_channel_card_compact(ui, channel);
+                                    ui.add_space(2.0);
+                                }
+                            } else {
+                                let footer_height = 26.0_f32;
+                                let scroll_height = (ui.available_height() - footer_height - 12.0_f32).max(60.0_f32);
 
-                            ui.add_space(4.0);
+                                egui::ScrollArea::vertical()
+                                    .max_height(scroll_height)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        for channel in &self.channels {
+                                            self.render_channel_card(ui, channel);
+                                            ui.add_space(8.0);
+                                        }
+                                    });
 
-                            // Linea divisoria inferiore sopra il Footer
-                            let (sep2_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-                            if sep_alpha > 0 {
-                                ui.painter().hline(sep2_rect.x_range(), sep2_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                                ui.add_space(4.0);
+
+                                // Linea divisoria inferiore sopra il Footer
+                                let (sep2_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+                                if sep_alpha > 0 {
+                                    ui.painter().hline(sep2_rect.x_range(), sep2_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                                }
+
+                                ui.add_space(4.0);
+
+                                // 3. FOOTER STICKY (visibile in vista normale)
+                                self.render_footer(ui);
                             }
-
-                            ui.add_space(4.0);
-
-                            // 3. FOOTER STICKY (visibile in vista normale)
-                            self.render_footer(ui);
                         }
                     });
 
@@ -460,6 +510,33 @@ impl SocialCountApp {
                 self.config.card_opacity = self.card_opacity;
                 let _ = self.config.save();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+
+            ui.add_space(2.0);
+
+            let settings_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let settings_hover = settings_resp.hovered();
+            if settings_hover {
+                ui.painter().circle_filled(settings_resp.rect.center(), 11.0, Color32::from_white_alpha(25));
+            }
+            let settings_color = if self.show_profile_manager {
+                Color32::from_rgb(147, 197, 253)
+            } else if settings_hover {
+                Color32::from_rgb(220, 230, 245)
+            } else {
+                Color32::from_rgb(175, 180, 195)
+            };
+            ui.painter().text(
+                settings_resp.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "⚙",
+                egui::FontId::proportional(13.0),
+                settings_color,
+            );
+            if settings_resp.clicked() {
+                self.show_profile_manager = !self.show_profile_manager;
+                self.profile_error_msg = None;
+                self.editing_channel_idx = None;
             }
 
             ui.add_space(2.0);
@@ -1047,6 +1124,335 @@ impl SocialCountApp {
                     views_galley,
                     Color32::from_rgb(224, 242, 254),
                 );
+            });
+        });
+    }
+
+    /// Schermata di gestione profili completa (CRUD) accessibile con tasto destro o icona ⚙
+    fn render_profile_manager(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, alpha_factor: f32) {
+        let total_w = ui.available_width();
+        let header_h = 26.0_f32;
+
+        // 1. Header con drag handle e pulsante chiudi
+        let (header_rect, header_resp) = ui.allocate_exact_size(
+            Vec2::new(total_w, header_h),
+            egui::Sense::click_and_drag(),
+        );
+
+        if header_resp.hovered() {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grab);
+        }
+        if header_resp.dragged() {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
+        }
+        if header_resp.dragged_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
+        ui.painter().text(
+            Pos2::new(header_rect.min.x + 4.0, header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "⚙ Gestione Canali YouTube",
+            egui::FontId::proportional(14.5),
+            Color32::from_rgb(255, 255, 255),
+        );
+
+        let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
+        header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let close_hover = close_resp.hovered();
+            if close_hover {
+                ui.painter().circle_filled(close_resp.rect.center(), 11.0, Color32::from_rgba_unmultiplied(239, 68, 68, 45));
+            }
+            let close_color = if close_hover { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(175, 180, 195) };
+            ui.painter().text(
+                close_resp.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "✕",
+                egui::FontId::proportional(13.0),
+                close_color,
+            );
+            if close_resp.clicked() {
+                self.show_profile_manager = false;
+                self.editing_channel_idx = None;
+                if self.is_compact {
+                    let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+                }
+            }
+        });
+
+        // Linea divisoria
+        ui.add_space(8.0);
+        let sep_alpha = (25.0 * alpha_factor).round() as u8;
+        let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+        if sep_alpha > 0 {
+            ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+        }
+        ui.add_space(8.0);
+
+        // 2. FORM AGGIUNGI CANALE (CREATE)
+        ui.horizontal(|ui| {
+            let input_width = (ui.available_width() - 88.0).max(120.0);
+            let input_resp = ui.add_sized(
+                [input_width, 24.0],
+                egui::TextEdit::singleline(&mut self.new_channel_input)
+                    .hint_text("Es: @matteobaccan")
+                    .margin(Margin::symmetric(6.0, 4.0)),
+            );
+
+            let enter_pressed = input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let add_btn = ui.add_sized(
+                [80.0, 24.0],
+                egui::Button::new(egui::RichText::new("+ Aggiungi").size(12.0).color(Color32::WHITE))
+                    .fill(Color32::from_rgb(37, 99, 235))
+                    .rounding(Rounding::same(5.0)),
+            );
+
+            if add_btn.clicked() || enter_pressed {
+                let trimmed = self.new_channel_input.trim();
+                if !trimmed.is_empty() {
+                    let formatted = if !trimmed.starts_with('@') && !trimmed.starts_with("UC") {
+                        format!("@{}", trimmed)
+                    } else {
+                        trimmed.to_string()
+                    };
+
+                    if self.config.channels.iter().any(|h| h.eq_ignore_ascii_case(&formatted)) {
+                        self.profile_error_msg = Some("Il canale è già presente nella lista".to_string());
+                    } else {
+                        self.profile_error_msg = None;
+                        self.config.channels.push(formatted.clone());
+                        self.channels.push(ChannelData::new_loading(&formatted));
+                        let _ = self.config.save();
+                        self.new_channel_input.clear();
+
+                        // Avvia il caricamento dei dati per il nuovo canale
+                        let tx = self.tx.clone();
+                        let h = formatted.clone();
+                        std::thread::spawn(move || {
+                            let fetcher = std::sync::Arc::new(YouTubeFetcher::new());
+                            let data = fetcher.fetch_channel(&h);
+                            let _ = tx.send(WorkerMessage::ChannelUpdated(data));
+                        });
+                    }
+                }
+            }
+        });
+
+        if let Some(err) = &self.profile_error_msg {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(format!("⚠️ {}", err)).size(11.0).color(Color32::from_rgb(239, 68, 68)));
+        }
+
+        ui.add_space(6.0);
+
+        // 3. LISTA DEI CANALI (READ, UPDATE, DELETE)
+        let list_h = (ui.available_height() - 36.0).max(100.0);
+        let mut to_delete_idx = None;
+        let mut to_move_up_idx = None;
+        let mut to_move_down_idx = None;
+        let mut to_save_edit = None;
+
+        egui::ScrollArea::vertical()
+            .max_height(list_h)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.config.channels.is_empty() {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new("Nessun canale configurato")
+                                .size(13.0)
+                                .color(Color32::from_rgb(148, 163, 184)),
+                        );
+                        ui.label(
+                            egui::RichText::new("Aggiungi il tuo primo canale sopra!")
+                                .size(11.0)
+                                .color(Color32::from_rgb(100, 116, 139)),
+                        );
+                    });
+                } else {
+                    for idx in 0..self.config.channels.len() {
+                        let handle = &self.config.channels[idx];
+                        let ch_data = self.channels.iter().find(|c| c.handle == *handle);
+
+                        let card_bg = Color32::from_rgba_unmultiplied(255, 255, 255, 12);
+                        let card_stroke = Stroke::new(1.0_f32, Color32::from_white_alpha(20));
+
+                        egui::Frame::none()
+                            .fill(card_bg)
+                            .stroke(card_stroke)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(Margin::symmetric(8.0, 6.0))
+                            .show(ui, |ui| {
+                                if self.editing_channel_idx == Some(idx) {
+                                    // Modalità modifica inline (UPDATE)
+                                    ui.horizontal(|ui| {
+                                        ui.add_sized(
+                                            [(ui.available_width() - 70.0).max(100.0), 22.0],
+                                            egui::TextEdit::singleline(&mut self.editing_channel_input),
+                                        );
+
+                                        if ui.small_button("✓").on_hover_text("Salva").clicked() {
+                                            to_save_edit = Some((idx, self.editing_channel_input.trim().to_string()));
+                                        }
+                                        if ui.small_button("✕").on_hover_text("Annulla").clicked() {
+                                            self.editing_channel_idx = None;
+                                        }
+                                    });
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        // Mini avatar o icona
+                                        let (avatar_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
+                                        let mut drawn = false;
+                                        if let Some(c) = ch_data {
+                                            if let Some(tex) = self.textures.get(&c.handle) {
+                                                ui.painter().image(
+                                                    tex.id(),
+                                                    avatar_rect,
+                                                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                                    Color32::WHITE,
+                                                );
+                                                drawn = true;
+                                            }
+                                        }
+                                        if !drawn {
+                                            crate::icons::draw_youtube_icon(ui.painter(), Rect::from_center_size(avatar_rect.center(), Vec2::new(16.0, 11.5)));
+                                        }
+
+                                        ui.add_space(4.0);
+
+                                        // Nome e handle
+                                        let title = ch_data.map(|c| c.title.as_str()).unwrap_or(handle.as_str());
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(title)
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(240, 243, 248)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(handle)
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(148, 163, 184)),
+                                            );
+                                        });
+
+                                        // Controlli CRUD a destra: Sposta su, Sposta giù, Modifica, Elimina
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            // Elimina (D)
+                                            let del_btn = ui.add(
+                                                egui::Button::new(egui::RichText::new("🗑").size(11.0).color(Color32::from_rgb(248, 113, 113)))
+                                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 25))
+                                                    .rounding(Rounding::same(4.0)),
+                                            ).on_hover_text("Elimina canale");
+                                            if del_btn.clicked() {
+                                                to_delete_idx = Some(idx);
+                                            }
+
+                                            // Modifica (U)
+                                            let edit_btn = ui.add(
+                                                egui::Button::new(egui::RichText::new("✏").size(11.0).color(Color32::from_rgb(147, 197, 253)))
+                                                    .fill(Color32::from_white_alpha(15))
+                                                    .rounding(Rounding::same(4.0)),
+                                            ).on_hover_text("Modifica handle");
+                                            if edit_btn.clicked() {
+                                                self.editing_channel_idx = Some(idx);
+                                                self.editing_channel_input = handle.clone();
+                                            }
+
+                                            // Sposta giù (U - Reorder)
+                                            if idx + 1 < self.config.channels.len() {
+                                                if ui.small_button("▼").on_hover_text("Sposta giù").clicked() {
+                                                    to_move_down_idx = Some(idx);
+                                                }
+                                            }
+
+                                            // Sposta su (U - Reorder)
+                                            if idx > 0 {
+                                                if ui.small_button("▲").on_hover_text("Sposta su").clicked() {
+                                                    to_move_up_idx = Some(idx);
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                            });
+                        ui.add_space(4.0);
+                    }
+                }
+            });
+
+        // Applica le modifiche pianificate
+        if let Some((idx, new_handle)) = to_save_edit {
+            if !new_handle.is_empty() {
+                let formatted = if !new_handle.starts_with('@') && !new_handle.starts_with("UC") {
+                    format!("@{}", new_handle)
+                } else {
+                    new_handle
+                };
+                self.config.channels[idx] = formatted.clone();
+                let _ = self.config.save();
+                self.editing_channel_idx = None;
+
+                // Aggiorna o ricarica
+                if let Some(pos) = self.channels.iter().position(|c| c.handle == formatted) {
+                    self.channels[pos] = ChannelData::new_loading(&formatted);
+                } else {
+                    self.channels.push(ChannelData::new_loading(&formatted));
+                }
+                let tx = self.tx.clone();
+                let h = formatted.clone();
+                std::thread::spawn(move || {
+                    let fetcher = std::sync::Arc::new(YouTubeFetcher::new());
+                    let data = fetcher.fetch_channel(&h);
+                    let _ = tx.send(WorkerMessage::ChannelUpdated(data));
+                });
+            }
+        }
+
+        if let Some(idx) = to_move_up_idx {
+            self.config.channels.swap(idx, idx - 1);
+            let _ = self.config.save();
+        }
+
+        if let Some(idx) = to_move_down_idx {
+            self.config.channels.swap(idx, idx + 1);
+            let _ = self.config.save();
+        }
+
+        if let Some(idx) = to_delete_idx {
+            let removed = self.config.channels.remove(idx);
+            self.channels.retain(|c| c.handle != removed);
+            let _ = self.config.save();
+        }
+
+        ui.add_space(6.0);
+
+        // 4. FOOTER
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("Totale canali: {}", self.config.channels.len()))
+                    .size(11.0)
+                    .color(Color32::from_rgb(148, 163, 184)),
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let done_btn = ui.add_sized(
+                    [80.0, 22.0],
+                    egui::Button::new(egui::RichText::new("✓ Fine").size(12.0).color(Color32::WHITE))
+                        .fill(Color32::from_rgb(59, 130, 246))
+                        .rounding(Rounding::same(5.0)),
+                );
+                if done_btn.clicked() {
+                    self.show_profile_manager = false;
+                    self.editing_channel_idx = None;
+                    if self.is_compact {
+                        let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+                    }
+                }
             });
         });
     }

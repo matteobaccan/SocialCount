@@ -26,8 +26,6 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("SocialCount - YouTube Channels")
             .with_inner_size(initial_size)
-            .with_min_inner_size(initial_size)
-            .with_max_inner_size(initial_size)
             .with_resizable(true)
             .with_maximize_button(false)
             .with_transparent(true)
