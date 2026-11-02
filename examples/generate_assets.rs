@@ -234,6 +234,24 @@ fn draw_eye_icon(img: &mut RgbaImage, cx: f32, cy: f32, size: f32, color: Rgba<u
     draw_circle(img, cx - r * 0.2, cy - r * 0.2, 1.5, Rgba([255, 255, 255, 255]));
 }
 
+fn draw_moon_icon(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, color: Rgba<u8>) {
+    draw_circle_stroke(img, cx, cy, radius, 1.2, color);
+    let (iw, ih) = img.dimensions();
+    let min_x = (cx - radius).max(0.0) as u32;
+    let max_x = cx.min(iw as f32 - 1.0) as u32;
+    let min_y = (cy - radius).max(0.0) as u32;
+    let max_y = (cy + radius).min(ih as f32 - 1.0) as u32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            if (dx * dx + dy * dy).sqrt() <= radius - 0.5 {
+                blend_pixel(img.get_pixel_mut(x, y), color);
+            }
+        }
+    }
+}
+
 fn draw_text(
     img: &mut RgbaImage,
     font: &impl Font,
@@ -385,7 +403,7 @@ fn generate_normal_screenshot(path: &Path, fonts: &Fonts) {
     // Slider
     draw_rounded_rect(&mut img, wx + 215, wy + 21, 60, 6, 3.0, Rgba([70, 75, 90, 220]));
     draw_circle(&mut img, (wx + 258) as f32, (wy + 24) as f32, 6.0, Rgba([240, 245, 255, 240]));
-    draw_text(&mut img, &fonts.regular, "🌓", (wx + 282) as f32, (wy + 16) as f32, 13.0, Rgba([175, 185, 200, 255]));
+    draw_moon_icon(&mut img, (wx + 286) as f32, (wy + 24) as f32, 5.0, Rgba([175, 185, 200, 255]));
 
     // Refresh icon & Close icon
     draw_text(&mut img, &fonts.regular, "⟳", (wx + 312) as f32, (wy + 15) as f32, 16.0, Rgba([180, 205, 240, 255]));
@@ -620,10 +638,10 @@ fn generate_banner(path: &Path, fonts: &Fonts) {
 
     // Feature tags pills
     let tags = [
-        ("🦀 Rust & egui", Rgba([249, 115, 22, 35]), Rgba([251, 146, 60, 255])),
-        ("🪟 Windows Borderless", Rgba([59, 130, 246, 35]), Rgba([96, 165, 250, 255])),
-        ("🔴 Live Delta ±", Rgba([239, 68, 68, 40]), Rgba([252, 165, 165, 255])),
-        ("⚡ Ultra-Compact", Rgba([16, 185, 129, 35]), Rgba([52, 211, 153, 255])),
+        ("Rust & egui", Rgba([249, 115, 22, 35]), Rgba([251, 146, 60, 255])),
+        ("Windows Borderless", Rgba([59, 130, 246, 35]), Rgba([96, 165, 250, 255])),
+        ("Live Delta ±", Rgba([239, 68, 68, 40]), Rgba([252, 165, 165, 255])),
+        ("Ultra-Compact Mode", Rgba([16, 185, 129, 35]), Rgba([52, 211, 153, 255])),
     ];
 
     let row1_y = hero_y + 268;
@@ -691,7 +709,7 @@ fn generate_banner(path: &Path, fonts: &Fonts) {
 
     draw_rounded_rect(&mut img, mock_x + 290, mock_y + 23, 60, 6, 3.0, Rgba([70, 75, 90, 220]));
     draw_circle(&mut img, (mock_x + 330) as f32, (mock_y + 26) as f32, 6.0, Rgba([240, 245, 255, 240]));
-    draw_text(&mut img, &fonts.regular, "🌓", (mock_x + 356) as f32, (mock_y + 18) as f32, 13.0, Rgba([175, 185, 200, 255]));
+    draw_moon_icon(&mut img, (mock_x + 360) as f32, (mock_y + 26) as f32, 5.0, Rgba([175, 185, 200, 255]));
 
     draw_text(&mut img, &fonts.regular, "⟳", (mock_x + 386) as f32, (mock_y + 17) as f32, 16.0, Rgba([180, 205, 240, 255]));
     draw_text(&mut img, &fonts.regular, "✕", (mock_x + 420) as f32, (mock_y + 18) as f32, 13.0, Rgba([140, 145, 160, 255]));

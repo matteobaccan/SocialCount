@@ -125,3 +125,34 @@ pub fn draw_live_dot(painter: &Painter, center: Pos2, is_loading: bool, time: f6
         painter.circle_filled(center, 3.2_f32, Color32::from_rgb(34, 197, 94));
     }
 }
+
+/// Draws vector half-moon opacity icon
+pub fn draw_moon_icon(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
+    painter.circle_stroke(center, radius, Stroke::new(1.2_f32, color));
+    // Fill left semicircle
+    let steps = 16;
+    let mut points = Vec::with_capacity(steps + 2);
+    points.push(center);
+    for i in 0..=steps {
+        let angle = std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * (i as f32 / steps as f32);
+        points.push(Pos2::new(center.x + radius * angle.cos(), center.y + radius * angle.sin()));
+    }
+    points.push(center);
+    painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+}
+
+/// Draws vector gear / settings icon
+pub fn draw_gear_icon(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
+    let teeth = 6;
+    let r_inner = radius * 0.70_f32;
+    let r_outer = radius;
+    let total_steps = teeth * 2;
+    let mut points = Vec::with_capacity(total_steps);
+    for i in 0..total_steps {
+        let angle = std::f32::consts::TAU * (i as f32 / total_steps as f32);
+        let r = if i % 2 == 0 { r_outer } else { r_inner };
+        points.push(Pos2::new(center.x + r * angle.cos(), center.y + r * angle.sin()));
+    }
+    painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+    painter.circle_filled(center, radius * 0.38_f32, Color32::from_rgb(18, 20, 28));
+}

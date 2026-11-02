@@ -2,7 +2,7 @@
 
 <img src="assets/socialcount-banner.png" alt="SocialCount Banner" width="100%" />
 
-# 📺 SocialCount
+# <img src="assets/icons/youtube.svg" width="32" height="32" valign="middle" alt="SocialCount" /> SocialCount
 
 **A modern, lightweight, transparent, always-on-top desktop widget developed in Rust to monitor YouTube channel statistics in real time.**
 
@@ -15,7 +15,7 @@
 
 ---
 
-## 📸 Screenshots
+## <img src="assets/icons/camera.svg" width="22" height="22" valign="middle" alt="Screenshots" /> Screenshots
 
 <div align="center">
   <table>
@@ -32,7 +32,7 @@
 
 ---
 
-## ✨ Key Features
+## <img src="assets/icons/sparkles.svg" width="22" height="22" valign="middle" alt="Key Features" /> Key Features
 
 - **Transparent & Borderless Window**: Clean system chrome-free window with native transparency that blends seamlessly onto your desktop.
 - **Always on Top**: Stays floating above all active applications during work or gaming sessions.
@@ -58,8 +58,8 @@
   - Double-click again to restore normal view.
 - **Smooth Multi-Screen Dragging**:
   - Custom coordinate-based dragging with direct position updates and `SWP_NOSIZE`, preventing Aero Snap dockings or unwanted resizing/ballooning when dragged across monitors with different DPIs or resolutions.
-- **Full CRUD Profile Manager (Right-Click or ⚙)**:
-  - **Right-click anywhere** or click the **⚙** header icon to open the channel manager.
+- **Full CRUD Profile Manager (Right-Click or Settings)**:
+  - **Right-click anywhere** or click the settings header button to open the channel manager.
   - **Create**: Add new YouTube channels (auto-formatted with `@`).
   - **Read**: View list with live avatars and handles.
   - **Update**: Inline handle editing, reorder channels up/down.
@@ -76,7 +76,7 @@
 
 ---
 
-## 🚀 Getting Started
+## <img src="assets/icons/rocket.svg" width="22" height="22" valign="middle" alt="Getting Started" /> Getting Started
 
 ### Prerequisites
 - **Rust** (with Cargo): Ensure Rust 1.75+ is installed (`rustc --version`).
@@ -99,7 +99,7 @@ cargo build --release
 
 ---
 
-## ⚙️ Configuration (`channels.toml`)
+## <img src="assets/icons/settings.svg" width="22" height="22" valign="middle" alt="Configuration" /> Configuration (`channels.toml`)
 
 On startup, SocialCount reads [`channels.toml`](channels.toml). If not present, a default configuration is generated:
 
@@ -126,7 +126,7 @@ window_height = 440.0
 
 ---
 
-## 🛠️ Project Structure
+## <img src="assets/icons/folder.svg" width="22" height="22" valign="middle" alt="Project Structure" /> Project Structure
 
 ```
 SocialCount/
@@ -134,7 +134,8 @@ SocialCount/
 ├── channels.toml       # Monitored YouTube channels and widget settings
 ├── LICENSE             # MIT License
 ├── README.md           # Project documentation
-├── assets/             # Logo, social banner, and documentation screenshots
+├── assets/             # Logo, social banner, vector SVG icons, and documentation screenshots
+│   ├── icons/          # Vector SVG icons
 │   ├── logo.png
 │   ├── socialcount-banner.png
 │   ├── screenshot-normal.png
@@ -151,13 +152,13 @@ SocialCount/
 
 ---
 
-## 📄 License
+## <img src="assets/icons/file-text.svg" width="22" height="22" valign="middle" alt="License" /> License
 
 Distributed under the **MIT** License. See [`LICENSE`](LICENSE) for more information.
 
 ---
 
-## 👤 Author
+## <img src="assets/icons/user.svg" width="22" height="22" valign="middle" alt="Author" /> Author
 
 **Matteo Baccan**
 - GitHub: [@matteobaccan](https://github.com/matteobaccan)

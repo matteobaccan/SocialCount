@@ -815,13 +815,7 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(175, 180, 195)
             };
-            ui.painter().text(
-                settings_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "⚙",
-                egui::FontId::proportional(13.0),
-                settings_color,
-            );
+            crate::icons::draw_gear_icon(ui.painter(), settings_resp.rect.center(), 5.5, settings_color);
             if settings_resp.clicked() {
                 self.show_profile_manager = !self.show_profile_manager;
                 self.profile_error_msg = None;
@@ -844,7 +838,7 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(180, 205, 240)
             };
-            let refresh_char = if self.is_loading { "⏳" } else { "⟳" };
+            let refresh_char = if self.is_loading { "..." } else { "⟳" };
             ui.painter().text(
                 refresh_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -872,11 +866,8 @@ impl SocialCountApp {
                     let _ = self.config.save();
                 }
 
-                ui.label(
-                    egui::RichText::new("🌓")
-                        .size(12.0)
-                        .color(Color32::from_rgb(175, 185, 200)),
-                );
+                let (moon_rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                crate::icons::draw_moon_icon(ui.painter(), moon_rect.center(), 5.0, Color32::from_rgb(175, 185, 200));
             });
         });
     }
@@ -1542,9 +1533,9 @@ impl SocialCountApp {
                     ui.label(egui::RichText::new(&channel.title).strong().color(Color32::WHITE));
                     ui.label(egui::RichText::new(&channel.handle).color(Color32::from_rgb(148, 163, 184)));
                     if let Some(err) = &channel.error {
-                        ui.label(egui::RichText::new(format!("⚠️ {} (Retrying in 1m)", err)).size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                        ui.label(egui::RichText::new(format!("Error: {} (Retrying in 1m)", err)).size(10.0).color(Color32::from_rgb(239, 68, 68)));
                     } else if channel.has_error() {
-                        ui.label(egui::RichText::new("⚠️ Stat unavailable (Retrying in 1m)").size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                        ui.label(egui::RichText::new("Stat unavailable (Retrying in 1m)").size(10.0).color(Color32::from_rgb(239, 68, 68)));
                     }
                 });
 
@@ -1629,7 +1620,7 @@ impl SocialCountApp {
         });
     }
 
-    /// Complete Profile Manager (CRUD) modal accessible via right-click or ⚙ button
+    /// Complete Profile Manager (CRUD) modal accessible via right-click or settings button
     fn render_profile_manager(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, alpha_factor: f32) {
         let total_w = ui.available_width();
         let header_h = 26.0_f32;
@@ -1656,7 +1647,7 @@ impl SocialCountApp {
         ui.painter().text(
             Pos2::new(header_rect.min.x + 4.0, header_rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "⚙ Manage YouTube Channels",
+            "Manage YouTube Channels",
             egui::FontId::proportional(14.5),
             Color32::from_rgb(255, 255, 255),
         );
@@ -1747,7 +1738,7 @@ impl SocialCountApp {
 
         if let Some(err) = &self.profile_error_msg {
             ui.add_space(2.0);
-            ui.label(egui::RichText::new(format!("⚠️ {}", err)).size(11.0).color(Color32::from_rgb(239, 68, 68)));
+            ui.label(egui::RichText::new(format!("Error: {}", err)).size(11.0).color(Color32::from_rgb(239, 68, 68)));
         }
 
         ui.add_space(6.0);
@@ -1795,14 +1786,14 @@ impl SocialCountApp {
                                     // Inline update mode (UPDATE)
                                     ui.horizontal(|ui| {
                                         ui.add_sized(
-                                            [(ui.available_width() - 70.0).max(100.0), 22.0],
+                                            [(ui.available_width() - 85.0).max(100.0), 22.0],
                                             egui::TextEdit::singleline(&mut self.editing_channel_input),
                                         );
 
-                                        if ui.small_button("✓").on_hover_text("Save").clicked() {
+                                        if ui.small_button("Save").on_hover_text("Save").clicked() {
                                             to_save_edit = Some((idx, self.editing_channel_input.trim().to_string()));
                                         }
-                                        if ui.small_button("✕").on_hover_text("Cancel").clicked() {
+                                        if ui.small_button("Cancel").on_hover_text("Cancel").clicked() {
                                             self.editing_channel_idx = None;
                                         }
                                     });
@@ -1812,7 +1803,7 @@ impl SocialCountApp {
                                         let (avatar_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
                                         let mut drawn = false;
                                         if let Some(c) = ch_data {
-                                            if let Some(tex) = self.textures.get(&c.handle) {
+                                             if let Some(tex) = self.textures.get(&c.handle) {
                                                 ui.painter().image(
                                                     tex.id(),
                                                     avatar_rect,
@@ -1848,7 +1839,7 @@ impl SocialCountApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             // Delete (D)
                                             let del_btn = ui.add(
-                                                egui::Button::new(egui::RichText::new("🗑").size(11.0).color(Color32::from_rgb(248, 113, 113)))
+                                                egui::Button::new(egui::RichText::new("Delete").size(10.5).color(Color32::from_rgb(248, 113, 113)))
                                                     .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 25))
                                                     .rounding(Rounding::same(4.0)),
                                             ).on_hover_text("Delete channel");
@@ -1858,7 +1849,7 @@ impl SocialCountApp {
 
                                             // Edit (U)
                                             let edit_btn = ui.add(
-                                                egui::Button::new(egui::RichText::new("✏").size(11.0).color(Color32::from_rgb(147, 197, 253)))
+                                                egui::Button::new(egui::RichText::new("Edit").size(10.5).color(Color32::from_rgb(147, 197, 253)))
                                                     .fill(Color32::from_white_alpha(15))
                                                     .rounding(Rounding::same(4.0)),
                                             ).on_hover_text("Edit handle");
@@ -1946,7 +1937,7 @@ impl SocialCountApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let done_btn = ui.add_sized(
                     [80.0, 22.0],
-                    egui::Button::new(egui::RichText::new("✓ Done").size(12.0).color(Color32::WHITE))
+                    egui::Button::new(egui::RichText::new("Done").size(12.0).color(Color32::WHITE))
                         .fill(Color32::from_rgb(59, 130, 246))
                         .rounding(Rounding::same(5.0)),
                 );
