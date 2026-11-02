@@ -14,5 +14,5 @@ card_opacity = 190
 compact_mode = false
 
 # Dimensioni della finestra (larghezza e altezza in pixel logici)
-window_width = 360.0
-window_height = 440.0
+window_width = 526.0
+window_height = 339.3

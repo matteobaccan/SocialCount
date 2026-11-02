@@ -1,0 +1,143 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Does tag match Cargo.toml?
+        run: |
+          versione=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"(.*)"/\1/')
+          if [ "v$versione" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match version in Cargo.toml (v$versione)"
+            exit 1
+          fi
+
+  build:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            nome: windows-x64
+            exe: socialcount.exe
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            nome: linux-x64
+            exe: socialcount
+          - os: macos-14
+            target: aarch64-apple-darwin
+            nome: macos-arm64
+            exe: socialcount
+          - os: macos-14
+            target: x86_64-apple-darwin
+            nome: macos-x64
+            exe: socialcount
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Linux dependencies (X11/Wayland/OpenGL)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+
+      - name: Test
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "socialcount-${{ matrix.nome }}-$env:TAG"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/${{ matrix.exe }} $dir/
+          Copy-Item channels.toml, README.md, LICENSE $dir/
+          # Si archivia il contenuto, non la cartella: Windows estraendo crea già
+          # una cartella col nome dello zip, e archiviare anche la nostra
+          # lascerebbe l'eseguibile annidato due volte.
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
+          "ARCHIVIO=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Package (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          dir="socialcount-${{ matrix.nome }}-$TAG"
+          mkdir -p "$dir"
+          cp target/${{ matrix.target }}/release/${{ matrix.exe }} "$dir/"
+          chmod +x "$dir/${{ matrix.exe }}"
+          cp channels.toml README.md LICENSE "$dir/"
+          tar -czf "$dir.tar.gz" "$dir"
+          echo "ARCHIVIO=$dir.tar.gz" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.nome }}
+          path: ${{ env.ARCHIVIO }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksum
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          name: SocialCount ${{ env.TAG }}
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Downloads
+            | Platform | File |
+            |---|---|
+            | Windows 10/11 (x64) | `socialcount-windows-x64-${{ env.TAG }}.zip` |
+            | Linux (x64) | `socialcount-linux-x64-${{ env.TAG }}.tar.gz` |
+            | macOS Apple Silicon (M1/M2/M3…) | `socialcount-macos-arm64-${{ env.TAG }}.tar.gz` |
+            | macOS Intel | `socialcount-macos-x64-${{ env.TAG }}.tar.gz` |
+
+            > macOS: the binary is unsigned. On first run, right-click → Open,
+            > or run `xattr -d com.apple.quarantine ./socialcount`.
