@@ -104,7 +104,10 @@ pub fn draw_eye_icon(painter: &Painter, rect: Rect, color: Color32) {
     painter.circle_stroke(center, pupil_radius, stroke);
 
     // Tiny white catchlight reflection
-    let catchlight_center = Pos2::new(center.x - pupil_radius * 0.35, center.y - pupil_radius * 0.35);
+    let catchlight_center = Pos2::new(
+        center.x - pupil_radius * 0.35,
+        center.y - pupil_radius * 0.35,
+    );
     painter.circle_filled(catchlight_center, 1.2_f32, Color32::WHITE);
 }
 
@@ -114,14 +117,22 @@ pub fn draw_live_dot(painter: &Painter, center: Pos2, is_loading: bool, time: f6
         // Yellow pulsing dot when loading
         let pulse = ((time * 6.0).sin() * 0.5 + 0.5) as f32;
         let radius = 3.5_f32 + pulse * 1.5_f32;
-        painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(251, 191, 36, 120));
+        painter.circle_filled(
+            center,
+            radius,
+            Color32::from_rgba_unmultiplied(251, 191, 36, 120),
+        );
         painter.circle_filled(center, 3.0_f32, Color32::from_rgb(251, 191, 36));
     } else {
         // Emerald pulsing dot when live
         let pulse = ((time * 2.8).sin() * 0.5 + 0.5) as f32;
         let halo_radius = 4.0_f32 + pulse * 2.5_f32;
         let alpha = (120.0 * (1.0 - pulse)).round() as u8;
-        painter.circle_filled(center, halo_radius, Color32::from_rgba_unmultiplied(34, 197, 94, alpha));
+        painter.circle_filled(
+            center,
+            halo_radius,
+            Color32::from_rgba_unmultiplied(34, 197, 94, alpha),
+        );
         painter.circle_filled(center, 3.2_f32, Color32::from_rgb(34, 197, 94));
     }
 }
@@ -135,7 +146,10 @@ pub fn draw_moon_icon(painter: &Painter, center: Pos2, radius: f32, color: Color
     points.push(center);
     for i in 0..=steps {
         let angle = std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * (i as f32 / steps as f32);
-        points.push(Pos2::new(center.x + radius * angle.cos(), center.y + radius * angle.sin()));
+        points.push(Pos2::new(
+            center.x + radius * angle.cos(),
+            center.y + radius * angle.sin(),
+        ));
     }
     points.push(center);
     painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
@@ -151,7 +165,10 @@ pub fn draw_gear_icon(painter: &Painter, center: Pos2, radius: f32, color: Color
     for i in 0..total_steps {
         let angle = std::f32::consts::TAU * (i as f32 / total_steps as f32);
         let r = if i % 2 == 0 { r_outer } else { r_inner };
-        points.push(Pos2::new(center.x + r * angle.cos(), center.y + r * angle.sin()));
+        points.push(Pos2::new(
+            center.x + r * angle.cos(),
+            center.y + r * angle.sin(),
+        ));
     }
     painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
     painter.circle_filled(center, radius * 0.38_f32, Color32::from_rgb(18, 20, 28));

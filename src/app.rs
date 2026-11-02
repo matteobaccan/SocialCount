@@ -132,7 +132,8 @@ mod win32_drag {
             let our_proc = borderless_wndproc as *const () as isize;
             let prev = GetWindowLongPtrW(hwnd, GWLP_WNDPROC);
             let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-            let has_border_style = (style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0
+            let has_border_style = (style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME))
+                != 0
                 || (style & WS_POPUP) == 0;
 
             if prev == our_proc && !has_border_style {
@@ -169,17 +170,13 @@ mod win32_drag {
                 std::mem::size_of::<u32>() as u32,
             );
 
-            let new_style = (style
-                & !(WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME))
-                | WS_POPUP;
+            let new_style =
+                (style & !(WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) | WS_POPUP;
             SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
 
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
             let new_ex = ex_style
-                & !(WS_EX_DLGMODALFRAME
-                    | WS_EX_WINDOWEDGE
-                    | WS_EX_CLIENTEDGE
-                    | WS_EX_STATICEDGE);
+                & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex as i32);
 
             if has_rect {
@@ -319,7 +316,10 @@ impl SocialCountApp {
             Vec2::new(compact_w, compact_h)
         } else {
             self.pre_compact_size.unwrap_or_else(|| {
-                Vec2::new(self.config.window_width.max(280.0), self.config.window_height.max(160.0))
+                Vec2::new(
+                    self.config.window_width.max(280.0),
+                    self.config.window_height.max(160.0),
+                )
             })
         };
 
@@ -375,7 +375,8 @@ impl SocialCountApp {
             match msg {
                 WorkerMessage::ChannelUpdated(new_data_box) => {
                     let mut new_data = *new_data_box;
-                    self.last_channel_fetch.insert(new_data.handle.clone(), Instant::now());
+                    self.last_channel_fetch
+                        .insert(new_data.handle.clone(), Instant::now());
                     if let Some(bytes) = &new_data.avatar_bytes {
                         if let Ok(img) = image::load_from_memory(bytes) {
                             let mut rgba = img.to_rgba8();
@@ -401,10 +402,8 @@ impl SocialCountApp {
 
                             let size = [w as usize, h as usize];
                             let pixels = rgba.as_flat_samples();
-                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                size,
-                                pixels.as_slice(),
-                            );
+                            let color_image =
+                                egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
                             let texture = ctx.load_texture(
                                 format!("avatar_{}", new_data.handle),
                                 color_image,
@@ -414,7 +413,11 @@ impl SocialCountApp {
                         }
                     }
 
-                    if let Some(pos) = self.channels.iter().position(|c| c.handle == new_data.handle) {
+                    if let Some(pos) = self
+                        .channels
+                        .iter()
+                        .position(|c| c.handle == new_data.handle)
+                    {
                         let old = &self.channels[pos];
 
                         // Retain initial baseline counts recorded at launch
@@ -422,7 +425,9 @@ impl SocialCountApp {
                         new_data.initial_views_count = old.initial_views_count;
 
                         // Set initial baseline if not yet recorded and current value > 0
-                        if new_data.initial_subscriber_count.is_none() && new_data.subscriber_count > 0 {
+                        if new_data.initial_subscriber_count.is_none()
+                            && new_data.subscriber_count > 0
+                        {
                             new_data.initial_subscriber_count = Some(new_data.subscriber_count);
                         }
                         if new_data.initial_views_count.is_none() && new_data.views_count > 0 {
@@ -433,14 +438,18 @@ impl SocialCountApp {
                         if new_data.avatar_bytes.is_none() && old.avatar_bytes.is_some() {
                             new_data.avatar_bytes = old.avatar_bytes.clone();
                         }
-                        if (new_data.title.is_empty() || new_data.title == new_data.handle.trim_start_matches('@'))
+                        if (new_data.title.is_empty()
+                            || new_data.title == new_data.handle.trim_start_matches('@'))
                             && !old.title.is_empty()
                         {
                             new_data.title = old.title.clone();
                         }
 
                         // Detect if subscriber count changed compared to previously known valid value
-                        if old.subscriber_count > 0 && new_data.subscriber_count > 0 && new_data.subscriber_count != old.subscriber_count {
+                        if old.subscriber_count > 0
+                            && new_data.subscriber_count > 0
+                            && new_data.subscriber_count != old.subscriber_count
+                        {
                             new_data.sub_changed = true;
                             new_data.sub_changed_at = Some(Instant::now());
                         } else {
@@ -449,13 +458,23 @@ impl SocialCountApp {
                         }
 
                         // Detect if view count changed compared to previous value
-                        if old.views_count > 0 && new_data.views_count > 0 && new_data.views_count != old.views_count {
+                        if old.views_count > 0
+                            && new_data.views_count > 0
+                            && new_data.views_count != old.views_count
+                        {
                             new_data.views_changed = true;
                             new_data.views_changed_at = Some(Instant::now());
                         } else {
-                            let old_views_clean = crate::youtube::clean_stat_number(&old.views_text);
-                            let new_views_clean = crate::youtube::clean_stat_number(&new_data.views_text);
-                            if !old_views_clean.is_empty() && old_views_clean != "-" && !new_views_clean.is_empty() && new_views_clean != "-" && old_views_clean != new_views_clean {
+                            let old_views_clean =
+                                crate::youtube::clean_stat_number(&old.views_text);
+                            let new_views_clean =
+                                crate::youtube::clean_stat_number(&new_data.views_text);
+                            if !old_views_clean.is_empty()
+                                && old_views_clean != "-"
+                                && !new_views_clean.is_empty()
+                                && new_views_clean != "-"
+                                && old_views_clean != new_views_clean
+                            {
                                 new_data.views_changed = true;
                                 new_data.views_changed_at = Some(Instant::now());
                             } else {
@@ -466,7 +485,9 @@ impl SocialCountApp {
 
                         self.channels[pos] = new_data;
                     } else {
-                        if new_data.initial_subscriber_count.is_none() && new_data.subscriber_count > 0 {
+                        if new_data.initial_subscriber_count.is_none()
+                            && new_data.subscriber_count > 0
+                        {
                             new_data.initial_subscriber_count = Some(new_data.subscriber_count);
                         }
                         if new_data.initial_views_count.is_none() && new_data.views_count > 0 {
@@ -475,7 +496,8 @@ impl SocialCountApp {
                         self.channels.push(new_data);
                     }
 
-                    self.channels.sort_by_key(|a| std::cmp::Reverse(a.subscriber_count));
+                    self.channels
+                        .sort_by_key(|a| std::cmp::Reverse(a.subscriber_count));
                 }
                 WorkerMessage::RefreshFinished => {
                     self.is_loading = false;
@@ -509,7 +531,10 @@ fn chrono_or_fallback_time() -> String {
             let mut st = MaybeUninit::<SystemTime>::uninit();
             GetLocalTime(st.as_mut_ptr());
             let st = st.assume_init();
-            format!("{:02}/{:02}/{} {:02}:{:02}:{:02}", st.w_day, st.w_month, st.w_year, st.w_hour, st.w_minute, st.w_second)
+            format!(
+                "{:02}/{:02}/{} {:02}:{:02}:{:02}",
+                st.w_day, st.w_month, st.w_year, st.w_hour, st.w_minute, st.w_second
+            )
         }
     }
     #[cfg(not(windows))]
@@ -559,7 +584,9 @@ impl eframe::App for SocialCountApp {
 
             // Also check for newly configured channels not yet in memory
             for handle in &self.config.channels {
-                if !self.channels.iter().any(|c| &c.handle == handle) && !to_refresh.contains(handle) {
+                if !self.channels.iter().any(|c| &c.handle == handle)
+                    && !to_refresh.contains(handle)
+                {
                     to_refresh.push(handle.clone());
                 }
             }
@@ -587,7 +614,9 @@ impl eframe::App for SocialCountApp {
                 }
             } else if self.is_compact {
                 let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                    205.0, compact_h,
+                )));
             }
         }
 
@@ -596,25 +625,37 @@ impl eframe::App for SocialCountApp {
             if self.is_compact {
                 Vec2::new(350.0, 440.0)
             } else {
-                Vec2::new(self.config.window_width.max(340.0), self.config.window_height.max(420.0))
+                Vec2::new(
+                    self.config.window_width.max(340.0),
+                    self.config.window_height.max(420.0),
+                )
             }
         } else if self.is_compact {
             let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
             Vec2::new(205.0, compact_h)
         } else {
-            Vec2::new(self.config.window_width.max(280.0), self.config.window_height.max(160.0))
+            Vec2::new(
+                self.config.window_width.max(280.0),
+                self.config.window_height.max(160.0),
+            )
         };
 
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if self.resize_drag.is_none() && !pointer_down {
             let current_size = ctx.screen_rect().size();
-            if (current_size.x - target_size.x).abs() > 4.0 || (current_size.y - target_size.y).abs() > 4.0 {
+            if (current_size.x - target_size.x).abs() > 4.0
+                || (current_size.y - target_size.y).abs() > 4.0
+            {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
             }
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(Color32::TRANSPARENT).inner_margin(Margin::same(4.0)))
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(Margin::same(4.0)),
+            )
             .show(ctx, |ui| {
                 let full_rect = ui.max_rect();
                 let alpha_factor = self.card_opacity as f32 / 255.0;
@@ -629,7 +670,10 @@ impl eframe::App for SocialCountApp {
                 let container_stroke = if self.card_opacity == 0 {
                     Stroke::NONE
                 } else {
-                    Stroke::new(1.0_f32, Color32::from_white_alpha((35.0 * alpha_factor).round() as u8))
+                    Stroke::new(
+                        1.0_f32,
+                        Color32::from_white_alpha((35.0 * alpha_factor).round() as u8),
+                    )
                 };
 
                 let container_shadow = if self.card_opacity == 0 {
@@ -658,7 +702,13 @@ impl eframe::App for SocialCountApp {
                     .fill(container_bg)
                     .stroke(container_stroke)
                     .shadow(container_shadow)
-                    .rounding(Rounding::same(if self.is_compact && !self.show_profile_manager { 8.0 } else { 18.0 }))
+                    .rounding(Rounding::same(
+                        if self.is_compact && !self.show_profile_manager {
+                            8.0
+                        } else {
+                            18.0
+                        },
+                    ))
                     .inner_margin(container_margin)
                     .show(ui, |ui| {
                         if self.show_profile_manager {
@@ -675,9 +725,16 @@ impl eframe::App for SocialCountApp {
                             let sep_alpha = (18.0 * alpha_factor).round() as u8;
                             if !self.is_compact {
                                 ui.add_space(8.0);
-                                let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+                                let (sep_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(ui.available_width(), 1.0),
+                                    egui::Sense::hover(),
+                                );
                                 if sep_alpha > 0 {
-                                    ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                                    ui.painter().hline(
+                                        sep_rect.x_range(),
+                                        sep_rect.center().y,
+                                        Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)),
+                                    );
                                 }
                                 ui.add_space(8.0);
                             } else {
@@ -693,7 +750,9 @@ impl eframe::App for SocialCountApp {
                                 }
                             } else {
                                 let footer_height = 26.0_f32;
-                                let scroll_height = (ui.available_height() - footer_height - 12.0_f32).max(60.0_f32);
+                                let scroll_height =
+                                    (ui.available_height() - footer_height - 12.0_f32)
+                                        .max(60.0_f32);
 
                                 egui::ScrollArea::vertical()
                                     .max_height(scroll_height)
@@ -708,9 +767,16 @@ impl eframe::App for SocialCountApp {
                                 ui.add_space(4.0);
 
                                 // Bottom divider line above footer
-                                let (sep2_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+                                let (sep2_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(ui.available_width(), 1.0),
+                                    egui::Sense::hover(),
+                                );
                                 if sep_alpha > 0 {
-                                    ui.painter().hline(sep2_rect.x_range(), sep2_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+                                    ui.painter().hline(
+                                        sep2_rect.x_range(),
+                                        sep2_rect.center().y,
+                                        Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)),
+                                    );
                                 }
 
                                 ui.add_space(4.0);
@@ -733,10 +799,8 @@ impl SocialCountApp {
         let total_w = ui.available_width();
         let header_h = 26.0_f32;
 
-        let (header_rect, header_resp) = ui.allocate_exact_size(
-            Vec2::new(total_w, header_h),
-            egui::Sense::click_and_drag(),
-        );
+        let (header_rect, header_resp) =
+            ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::click_and_drag());
 
         if header_resp.hovered() {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grab);
@@ -747,7 +811,9 @@ impl SocialCountApp {
         if header_resp.double_clicked() {
             self.toggle_compact(ctx);
         }
-        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary)
+            || header_resp.dragged_by(egui::PointerButton::Primary)
+        {
             #[cfg(windows)]
             self.start_win32_drag();
             #[cfg(not(windows))]
@@ -755,7 +821,11 @@ impl SocialCountApp {
         }
 
         // Sub-UI for interactive buttons on the right
-        let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
+        let mut header_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(header_rect)
+                .layout(*ui.layout()),
+        );
 
         // Draw YouTube logo and title on the left
         let logo_rect = Rect::from_center_size(
@@ -774,13 +844,22 @@ impl SocialCountApp {
 
         // Controls on the right
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+            let close_resp = ui
+                .allocate_response(Vec2::splat(22.0), egui::Sense::click())
                 .on_hover_text("Close");
             let close_hover = close_resp.hovered();
             if close_hover {
-                ui.painter().circle_filled(close_resp.rect.center(), 11.0, Color32::from_rgba_unmultiplied(239, 68, 68, 45));
+                ui.painter().circle_filled(
+                    close_resp.rect.center(),
+                    11.0,
+                    Color32::from_rgba_unmultiplied(239, 68, 68, 45),
+                );
             }
-            let close_color = if close_hover { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(175, 180, 195) };
+            let close_color = if close_hover {
+                Color32::from_rgb(248, 113, 113)
+            } else {
+                Color32::from_rgb(175, 180, 195)
+            };
             ui.painter().text(
                 close_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -802,11 +881,16 @@ impl SocialCountApp {
 
             ui.add_space(2.0);
 
-            let settings_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+            let settings_resp = ui
+                .allocate_response(Vec2::splat(22.0), egui::Sense::click())
                 .on_hover_text("Manage profiles (or right-click)");
             let settings_hover = settings_resp.hovered();
             if settings_hover {
-                ui.painter().circle_filled(settings_resp.rect.center(), 11.0, Color32::from_white_alpha(25));
+                ui.painter().circle_filled(
+                    settings_resp.rect.center(),
+                    11.0,
+                    Color32::from_white_alpha(25),
+                );
             }
             let settings_color = if self.show_profile_manager {
                 Color32::from_rgb(147, 197, 253)
@@ -815,7 +899,12 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(175, 180, 195)
             };
-            crate::icons::draw_gear_icon(ui.painter(), settings_resp.rect.center(), 5.5, settings_color);
+            crate::icons::draw_gear_icon(
+                ui.painter(),
+                settings_resp.rect.center(),
+                5.5,
+                settings_color,
+            );
             if settings_resp.clicked() {
                 self.show_profile_manager = !self.show_profile_manager;
                 self.profile_error_msg = None;
@@ -824,12 +913,21 @@ impl SocialCountApp {
 
             ui.add_space(2.0);
 
-            let refresh_tooltip = if self.is_loading { "Refreshing..." } else { "Refresh now" };
-            let refresh_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+            let refresh_tooltip = if self.is_loading {
+                "Refreshing..."
+            } else {
+                "Refresh now"
+            };
+            let refresh_resp = ui
+                .allocate_response(Vec2::splat(22.0), egui::Sense::click())
                 .on_hover_text(refresh_tooltip);
             let refresh_hover = refresh_resp.hovered();
             if refresh_hover {
-                ui.painter().circle_filled(refresh_resp.rect.center(), 11.0, Color32::from_white_alpha(25));
+                ui.painter().circle_filled(
+                    refresh_resp.rect.center(),
+                    11.0,
+                    Color32::from_white_alpha(25),
+                );
             }
             let refresh_color = if self.is_loading {
                 Color32::from_rgb(251, 191, 36)
@@ -856,9 +954,9 @@ impl SocialCountApp {
             let op_percent = ((self.card_opacity as f32 / 255.0) * 100.0).round() as u32;
             ui.horizontal(|ui| {
                 ui.spacing_mut().slider_width = 70.0_f32;
-                let slider = egui::Slider::new(&mut self.card_opacity, 0..=255)
-                    .show_value(false);
-                let slider_resp = ui.add(slider)
+                let slider = egui::Slider::new(&mut self.card_opacity, 0..=255).show_value(false);
+                let slider_resp = ui
+                    .add(slider)
                     .on_hover_text(format!("Background opacity: {}%", op_percent));
 
                 if slider_resp.drag_stopped() || (slider_resp.changed() && !slider_resp.dragged()) {
@@ -866,8 +964,14 @@ impl SocialCountApp {
                     let _ = self.config.save();
                 }
 
-                let (moon_rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-                crate::icons::draw_moon_icon(ui.painter(), moon_rect.center(), 5.0, Color32::from_rgb(175, 185, 200));
+                let (moon_rect, _) =
+                    ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                crate::icons::draw_moon_icon(
+                    ui.painter(),
+                    moon_rect.center(),
+                    5.0,
+                    Color32::from_rgb(175, 185, 200),
+                );
             });
         });
     }
@@ -877,10 +981,8 @@ impl SocialCountApp {
         let total_w = ui.available_width();
         let header_h = 13.0_f32;
 
-        let (header_rect, header_resp) = ui.allocate_exact_size(
-            Vec2::new(total_w, header_h),
-            egui::Sense::click_and_drag(),
-        );
+        let (header_rect, header_resp) =
+            ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::click_and_drag());
 
         if header_resp.hovered() {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grab);
@@ -891,7 +993,9 @@ impl SocialCountApp {
         if header_resp.double_clicked() {
             self.toggle_compact(ctx);
         }
-        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary)
+            || header_resp.dragged_by(egui::PointerButton::Primary)
+        {
             #[cfg(windows)]
             self.start_win32_drag();
             #[cfg(not(windows))]
@@ -904,11 +1008,9 @@ impl SocialCountApp {
         } else {
             Color32::from_white_alpha(45)
         };
-        let handle_rect = Rect::from_center_size(
-            header_rect.center(),
-            Vec2::new(28.0, 3.0),
-        );
-        ui.painter().rect_filled(handle_rect, Rounding::same(1.5), handle_color);
+        let handle_rect = Rect::from_center_size(header_rect.center(), Vec2::new(28.0, 3.0));
+        ui.painter()
+            .rect_filled(handle_rect, Rounding::same(1.5), handle_color);
 
         // Micro logo on the left
         let logo_rect = Rect::from_center_size(
@@ -918,12 +1020,21 @@ impl SocialCountApp {
         crate::icons::draw_youtube_icon(ui.painter(), logo_rect);
 
         // Tiny close button on the right
-        let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
+        let mut header_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(header_rect)
+                .layout(*ui.layout()),
+        );
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(13.0), egui::Sense::click())
+            let close_resp = ui
+                .allocate_response(Vec2::splat(13.0), egui::Sense::click())
                 .on_hover_text("Close");
             let close_hover = close_resp.hovered();
-            let close_color = if close_hover { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(140, 145, 160) };
+            let close_color = if close_hover {
+                Color32::from_rgb(248, 113, 113)
+            } else {
+                Color32::from_rgb(140, 145, 160)
+            };
             ui.painter().text(
                 close_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -942,23 +1053,73 @@ impl SocialCountApp {
 
     /// Sticky footer for normal view
     fn render_footer(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.centered_and_justified(|ui| {
-                ui.horizontal(|ui| {
-                    let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 16.0), egui::Sense::hover());
-                    let time_now = ui.input(|i| i.time);
-                    crate::icons::draw_live_dot(ui.painter(), dot_rect.center(), self.is_loading, time_now);
+        let total_w = ui.available_width();
+        let footer_h = 18.0_f32;
+        let (footer_rect, _) =
+            ui.allocate_exact_size(Vec2::new(total_w, footer_h), egui::Sense::hover());
 
-                    ui.add_space(4.0);
+        let painter = ui.painter();
+        let time_now = ui.input(|i| i.time);
 
-                    ui.label(
-                        egui::RichText::new(format!("Updated: {}", self.last_refresh_str))
-                            .size(11.0)
-                            .color(Color32::from_rgb(148, 163, 184)),
-                    );
-                });
-            });
+        // Center content: live indicator dot + last updated timestamp
+        let updated_str = format!("Updated: {}", self.last_refresh_str);
+        let updated_font = egui::FontId::proportional(11.0);
+        let updated_color = Color32::from_rgb(148, 163, 184);
+
+        let text_galley = ui
+            .fonts(|f| f.layout_no_wrap(updated_str.clone(), updated_font.clone(), updated_color));
+        let dot_spacing = 6.0_f32;
+        let dot_radius = 3.5_f32;
+        let center_content_w = (dot_radius * 2.0) + dot_spacing + text_galley.size().x;
+
+        let start_x = footer_rect.center().x - (center_content_w / 2.0);
+        let dot_pos = Pos2::new(start_x + dot_radius, footer_rect.center().y);
+        crate::icons::draw_live_dot(painter, dot_pos, self.is_loading, time_now);
+
+        let text_pos = Pos2::new(
+            start_x + (dot_radius * 2.0) + dot_spacing,
+            footer_rect.center().y,
+        );
+        painter.text(
+            text_pos,
+            egui::Align2::LEFT_CENTER,
+            updated_str,
+            updated_font,
+            updated_color,
+        );
+
+        // Bottom right: version indication
+        let version_str = concat!("v", env!("CARGO_PKG_VERSION"));
+        let version_font = egui::FontId::proportional(10.5);
+        let version_color = Color32::from_rgb(100, 116, 139);
+
+        let version_galley = ui.fonts(|f| {
+            f.layout_no_wrap(version_str.to_string(), version_font.clone(), version_color)
         });
+        let version_pos = Pos2::new(footer_rect.max.x - 10.0, footer_rect.center().y);
+
+        let version_rect = Rect::from_min_size(
+            Pos2::new(
+                footer_rect.max.x - 10.0 - version_galley.size().x,
+                footer_rect.center().y - version_galley.size().y / 2.0,
+            ),
+            version_galley.size(),
+        );
+
+        ui.interact(
+            version_rect,
+            egui::Id::new("app_version"),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(format!("SocialCount {}", version_str));
+
+        painter.text(
+            version_pos,
+            egui::Align2::RIGHT_CENTER,
+            version_str,
+            version_font,
+            version_color,
+        );
     }
 
     fn render_resize_handles(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, rect: Rect) {
@@ -978,11 +1139,27 @@ impl SocialCountApp {
             Pos2::new(rect.max.x - corner_size, rect.max.y),
         );
 
-        let se_resp = ui.interact(se_rect, egui::Id::new("resize_se"), egui::Sense::click_and_drag());
-        let east_resp = ui.interact(east_rect, egui::Id::new("resize_east"), egui::Sense::click_and_drag());
-        let south_resp = ui.interact(south_rect, egui::Id::new("resize_south"), egui::Sense::click_and_drag());
+        let se_resp = ui.interact(
+            se_rect,
+            egui::Id::new("resize_se"),
+            egui::Sense::click_and_drag(),
+        );
+        let east_resp = ui.interact(
+            east_rect,
+            egui::Id::new("resize_east"),
+            egui::Sense::click_and_drag(),
+        );
+        let south_resp = ui.interact(
+            south_rect,
+            egui::Id::new("resize_south"),
+            egui::Sense::click_and_drag(),
+        );
 
-        let min_w = if self.is_compact { 175.0_f32 } else { 280.0_f32 };
+        let min_w = if self.is_compact {
+            175.0_f32
+        } else {
+            280.0_f32
+        };
         let min_h = if self.is_compact { 50.0_f32 } else { 160.0_f32 };
         let max_w = 1200.0_f32;
         let max_h = 1600.0_f32;
@@ -1063,11 +1240,29 @@ impl SocialCountApp {
 
         // Cursors
         let is_se_active = se_resp.hovered()
-            || matches!(self.resize_drag, Some(ResizeDragState { mode: ResizeMode::SouthEast, .. }));
+            || matches!(
+                self.resize_drag,
+                Some(ResizeDragState {
+                    mode: ResizeMode::SouthEast,
+                    ..
+                })
+            );
         let is_east_active = east_resp.hovered()
-            || matches!(self.resize_drag, Some(ResizeDragState { mode: ResizeMode::East, .. }));
+            || matches!(
+                self.resize_drag,
+                Some(ResizeDragState {
+                    mode: ResizeMode::East,
+                    ..
+                })
+            );
         let is_south_active = south_resp.hovered()
-            || matches!(self.resize_drag, Some(ResizeDragState { mode: ResizeMode::South, .. }));
+            || matches!(
+                self.resize_drag,
+                Some(ResizeDragState {
+                    mode: ResizeMode::South,
+                    ..
+                })
+            );
 
         if is_se_active {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeNwSe);
@@ -1092,9 +1287,18 @@ impl SocialCountApp {
 
         if grip_color != Color32::TRANSPARENT {
             let p = rect.max - Vec2::new(6.0, 6.0);
-            painter.line_segment([p, p - Vec2::new(3.0, 0.0)], Stroke::new(1.6_f32, grip_color));
-            painter.line_segment([p - Vec2::new(5.0, 0.0), p - Vec2::new(0.0, 5.0)], Stroke::new(1.6_f32, grip_color));
-            painter.line_segment([p - Vec2::new(9.0, 0.0), p - Vec2::new(0.0, 9.0)], Stroke::new(1.6_f32, grip_color));
+            painter.line_segment(
+                [p, p - Vec2::new(3.0, 0.0)],
+                Stroke::new(1.6_f32, grip_color),
+            );
+            painter.line_segment(
+                [p - Vec2::new(5.0, 0.0), p - Vec2::new(0.0, 5.0)],
+                Stroke::new(1.6_f32, grip_color),
+            );
+            painter.line_segment(
+                [p - Vec2::new(9.0, 0.0), p - Vec2::new(0.0, 9.0)],
+                Stroke::new(1.6_f32, grip_color),
+            );
         }
     }
 
@@ -1112,7 +1316,10 @@ impl SocialCountApp {
             .stroke(if opacity == 0 {
                 Stroke::NONE
             } else {
-                Stroke::new(1.0_f32, Color32::from_white_alpha((22.0 * alpha_factor).round() as u8))
+                Stroke::new(
+                    1.0_f32,
+                    Color32::from_white_alpha((22.0 * alpha_factor).round() as u8),
+                )
             })
             .rounding(Rounding::same(14.0))
             .inner_margin(Margin::symmetric(12.0, 10.0));
@@ -1120,19 +1327,13 @@ impl SocialCountApp {
         card_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 let avatar_size = 48.0;
-                let (avatar_rect, _resp) = ui.allocate_exact_size(
-                    Vec2::splat(avatar_size),
-                    egui::Sense::hover(),
-                );
+                let (avatar_rect, _resp) =
+                    ui.allocate_exact_size(Vec2::splat(avatar_size), egui::Sense::hover());
 
                 if let Some(texture) = self.textures.get(&channel.handle) {
                     let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-                    ui.painter().image(
-                        texture.id(),
-                        avatar_rect,
-                        uv,
-                        Color32::WHITE,
-                    );
+                    ui.painter()
+                        .image(texture.id(), avatar_rect, uv, Color32::WHITE);
 
                     ui.painter().circle_stroke(
                         avatar_rect.center(),
@@ -1177,18 +1378,18 @@ impl SocialCountApp {
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        let mut title_resp = ui.add(
-                            egui::Link::new(
-                                egui::RichText::new(&channel.title)
-                                    .strong()
-                                    .size(15.0)
-                                    .color(Color32::from_rgb(255, 255, 255)),
-                            )
-                        );
+                        let mut title_resp = ui.add(egui::Link::new(
+                            egui::RichText::new(&channel.title)
+                                .strong()
+                                .size(15.0)
+                                .color(Color32::from_rgb(255, 255, 255)),
+                        ));
                         if let Some(err) = &channel.error {
-                            title_resp = title_resp.on_hover_text(format!("Error: {} (Retrying in 1m)", err));
+                            title_resp = title_resp
+                                .on_hover_text(format!("Error: {} (Retrying in 1m)", err));
                         } else if channel.has_error() {
-                            title_resp = title_resp.on_hover_text("Stat unavailable (Retrying in 1m)");
+                            title_resp =
+                                title_resp.on_hover_text("Stat unavailable (Retrying in 1m)");
                         }
                         if title_resp.clicked() {
                             let _ = open::that(&channel.channel_url);
@@ -1222,8 +1423,13 @@ impl SocialCountApp {
                         let sub_increased = delta_sub > 0;
                         let sub_changed = delta_sub != 0 || channel.sub_changed;
 
-                        let (box1_rect, box1_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(box1_rect, Rounding::same(8.0), Color32::from_rgb(16, 44, 28));
+                        let (box1_rect, box1_resp) =
+                            ui.allocate_exact_size(box_size, egui::Sense::hover());
+                        ui.painter().rect_filled(
+                            box1_rect,
+                            Rounding::same(8.0),
+                            Color32::from_rgb(16, 44, 28),
+                        );
                         let stroke1_color = if sub_increased {
                             Color32::from_rgb(239, 68, 68) // Red border when increased
                         } else if sub_changed {
@@ -1232,49 +1438,82 @@ impl SocialCountApp {
                             Color32::from_rgb(52, 211, 153)
                         };
                         let stroke1_width = if sub_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(box1_rect, Rounding::same(8.0), Stroke::new(stroke1_width, stroke1_color));
+                        ui.painter().rect_stroke(
+                            box1_rect,
+                            Rounding::same(8.0),
+                            Stroke::new(stroke1_width, stroke1_color),
+                        );
 
                         let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
                         let font_id = egui::FontId::proportional(13.0);
-                        let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num.clone(), font_id.clone(), Color32::from_rgb(209, 250, 229)));
+                        let sub_galley = ui.fonts(|f| {
+                            f.layout_no_wrap(
+                                sub_num.clone(),
+                                font_id.clone(),
+                                Color32::from_rgb(209, 250, 229),
+                            )
+                        });
                         let icon1_w = 14.0_f32;
                         let item_gap = 5.0_f32;
 
                         let delta_sub_str = crate::youtube::format_compact_delta(delta_sub);
-                        let (delta1_galley, delta1_color) = if !delta_sub_str.is_empty() {
-                            let delta_font = egui::FontId::proportional(11.0);
-                            let color = if sub_increased {
-                                Color32::from_rgb(252, 165, 165)
+                        let (delta1_galley, delta1_color) =
+                            if !delta_sub_str.is_empty() {
+                                let delta_font = egui::FontId::proportional(11.0);
+                                let color = if sub_increased {
+                                    Color32::from_rgb(252, 165, 165)
+                                } else {
+                                    Color32::from_rgb(253, 186, 116)
+                                };
+                                (
+                                    Some(ui.fonts(|f| {
+                                        f.layout_no_wrap(delta_sub_str, delta_font, color)
+                                    })),
+                                    color,
+                                )
                             } else {
-                                Color32::from_rgb(253, 186, 116)
+                                (None, Color32::TRANSPARENT)
                             };
-                            (Some(ui.fonts(|f| f.layout_no_wrap(delta_sub_str, delta_font, color))), color)
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
 
                         let circle1_w = if sub_increased { 10.0_f32 } else { 0.0_f32 };
                         let delta1_w = delta1_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total1_w = icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
+                        let total1_w =
+                            icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
                         let start1_x = box1_rect.center().x - total1_w / 2.0;
 
                         let icon1_rect = Rect::from_center_size(
                             Pos2::new(start1_x + icon1_w / 2.0, box1_rect.center().y),
                             Vec2::splat(14.0),
                         );
-                        crate::icons::draw_user_icon(ui.painter(), icon1_rect, Color32::from_rgb(52, 211, 153));
+                        crate::icons::draw_user_icon(
+                            ui.painter(),
+                            icon1_rect,
+                            Color32::from_rgb(52, 211, 153),
+                        );
 
                         ui.painter().galley(
-                            Pos2::new(start1_x + icon1_w + item_gap, box1_rect.center().y - sub_galley.size().y / 2.0),
+                            Pos2::new(
+                                start1_x + icon1_w + item_gap,
+                                box1_rect.center().y - sub_galley.size().y / 2.0,
+                            ),
                             sub_galley,
                             Color32::from_rgb(209, 250, 229),
                         );
 
-                        let mut cur1_x = start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 5.0;
+                        let mut cur1_x =
+                            start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 5.0;
                         if sub_increased {
                             let circle_pos = Pos2::new(cur1_x + 3.5, box1_rect.center().y);
-                            ui.painter().circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
-                            ui.painter().circle_stroke(circle_pos, 3.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                            ui.painter().circle_filled(
+                                circle_pos,
+                                3.5,
+                                Color32::from_rgb(239, 68, 68),
+                            );
+                            ui.painter().circle_stroke(
+                                circle_pos,
+                                3.5,
+                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                            );
                             cur1_x += 10.0;
                         }
 
@@ -1288,7 +1527,10 @@ impl SocialCountApp {
 
                         let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
                             if delta_sub != 0 {
-                                format!("Subscribers: {} | Since launch: {:+} (initial: {})", sub_num, delta_sub, init)
+                                format!(
+                                    "Subscribers: {} | Since launch: {:+} (initial: {})",
+                                    sub_num, delta_sub, init
+                                )
                             } else {
                                 format!("Subscribers: {} (no change since launch)", sub_num)
                             }
@@ -1302,8 +1544,13 @@ impl SocialCountApp {
                         let views_increased = delta_views > 0;
                         let views_changed = delta_views != 0 || channel.views_changed;
 
-                        let (box2_rect, box2_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(box2_rect, Rounding::same(8.0), Color32::from_rgb(18, 36, 58));
+                        let (box2_rect, box2_resp) =
+                            ui.allocate_exact_size(box_size, egui::Sense::hover());
+                        ui.painter().rect_filled(
+                            box2_rect,
+                            Rounding::same(8.0),
+                            Color32::from_rgb(18, 36, 58),
+                        );
                         let stroke2_color = if views_increased {
                             Color32::from_rgb(239, 68, 68) // Red border when increased
                         } else if views_changed {
@@ -1312,10 +1559,20 @@ impl SocialCountApp {
                             Color32::from_rgb(96, 165, 250)
                         };
                         let stroke2_width = if views_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(box2_rect, Rounding::same(8.0), Stroke::new(stroke2_width, stroke2_color));
+                        ui.painter().rect_stroke(
+                            box2_rect,
+                            Rounding::same(8.0),
+                            Stroke::new(stroke2_width, stroke2_color),
+                        );
 
                         let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                        let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254)));
+                        let views_galley = ui.fonts(|f| {
+                            f.layout_no_wrap(
+                                views_num.clone(),
+                                font_id,
+                                Color32::from_rgb(224, 242, 254),
+                            )
+                        });
                         let icon2_w = 16.0_f32;
 
                         let delta_views_str = crate::youtube::format_compact_delta(delta_views);
@@ -1326,33 +1583,55 @@ impl SocialCountApp {
                             } else {
                                 Color32::from_rgb(253, 186, 116)
                             };
-                            (Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))), color)
+                            (
+                                Some(ui.fonts(|f| {
+                                    f.layout_no_wrap(delta_views_str, delta_font, color)
+                                })),
+                                color,
+                            )
                         } else {
                             (None, Color32::TRANSPARENT)
                         };
 
                         let circle2_w = if views_increased { 10.0_f32 } else { 0.0_f32 };
                         let delta2_w = delta2_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total2_w = icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
+                        let total2_w =
+                            icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
                         let start2_x = box2_rect.center().x - total2_w / 2.0;
 
                         let icon2_rect = Rect::from_center_size(
                             Pos2::new(start2_x + icon2_w / 2.0, box2_rect.center().y),
                             Vec2::new(16.0, 14.0),
                         );
-                        crate::icons::draw_eye_icon(ui.painter(), icon2_rect, Color32::from_rgb(96, 165, 250));
+                        crate::icons::draw_eye_icon(
+                            ui.painter(),
+                            icon2_rect,
+                            Color32::from_rgb(96, 165, 250),
+                        );
 
                         ui.painter().galley(
-                            Pos2::new(start2_x + icon2_w + item_gap, box2_rect.center().y - views_galley.size().y / 2.0),
+                            Pos2::new(
+                                start2_x + icon2_w + item_gap,
+                                box2_rect.center().y - views_galley.size().y / 2.0,
+                            ),
                             views_galley,
                             Color32::from_rgb(224, 242, 254),
                         );
 
-                        let mut cur2_x = start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 5.0;
+                        let mut cur2_x =
+                            start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 5.0;
                         if views_increased {
                             let circle_pos = Pos2::new(cur2_x + 3.5, box2_rect.center().y);
-                            ui.painter().circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
-                            ui.painter().circle_stroke(circle_pos, 3.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                            ui.painter().circle_filled(
+                                circle_pos,
+                                3.5,
+                                Color32::from_rgb(239, 68, 68),
+                            );
+                            ui.painter().circle_stroke(
+                                circle_pos,
+                                3.5,
+                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                            );
                             cur2_x += 10.0;
                         }
 
@@ -1366,7 +1645,10 @@ impl SocialCountApp {
 
                         let views_tooltip = if let Some(init) = channel.initial_views_count {
                             if delta_views != 0 {
-                                format!("Views: {} | Since launch: {:+} (initial: {})", views_num, delta_views, init)
+                                format!(
+                                    "Views: {} | Since launch: {:+} (initial: {})",
+                                    views_num, delta_views, init
+                                )
                             } else {
                                 format!("Views: {} (no change since launch)", views_num)
                             }
@@ -1394,7 +1676,10 @@ impl SocialCountApp {
             .stroke(if opacity == 0 {
                 Stroke::NONE
             } else {
-                Stroke::new(1.0_f32, Color32::from_white_alpha((18.0 * alpha_factor).round() as u8))
+                Stroke::new(
+                    1.0_f32,
+                    Color32::from_white_alpha((18.0 * alpha_factor).round() as u8),
+                )
             })
             .rounding(Rounding::same(8.0))
             .inner_margin(Margin::symmetric(4.0, 2.0));
@@ -1416,7 +1701,11 @@ impl SocialCountApp {
                 let sub_changed = delta_sub != 0 || channel.sub_changed;
 
                 let (box1_rect, box1_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
-                ui.painter().rect_filled(box1_rect, Rounding::same(5.0), Color32::from_rgb(16, 44, 28));
+                ui.painter().rect_filled(
+                    box1_rect,
+                    Rounding::same(5.0),
+                    Color32::from_rgb(16, 44, 28),
+                );
                 let stroke1_color = if sub_increased {
                     Color32::from_rgb(239, 68, 68) // Red border when increased
                 } else if sub_changed {
@@ -1425,11 +1714,21 @@ impl SocialCountApp {
                     Color32::from_rgb(52, 211, 153)
                 };
                 let stroke1_width = if sub_changed { 1.5_f32 } else { 1.0_f32 };
-                ui.painter().rect_stroke(box1_rect, Rounding::same(5.0), Stroke::new(stroke1_width, stroke1_color));
+                ui.painter().rect_stroke(
+                    box1_rect,
+                    Rounding::same(5.0),
+                    Stroke::new(stroke1_width, stroke1_color),
+                );
 
                 let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
                 let font_id = egui::FontId::proportional(11.0);
-                let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num.clone(), font_id.clone(), Color32::from_rgb(209, 250, 229)));
+                let sub_galley = ui.fonts(|f| {
+                    f.layout_no_wrap(
+                        sub_num.clone(),
+                        font_id.clone(),
+                        Color32::from_rgb(209, 250, 229),
+                    )
+                });
                 let icon1_w = 11.0_f32;
                 let item_gap = 3.0_f32;
 
@@ -1441,7 +1740,10 @@ impl SocialCountApp {
                     } else {
                         Color32::from_rgb(253, 186, 116)
                     };
-                    (Some(ui.fonts(|f| f.layout_no_wrap(delta_sub_str, delta_font, color))), color)
+                    (
+                        Some(ui.fonts(|f| f.layout_no_wrap(delta_sub_str, delta_font, color))),
+                        color,
+                    )
                 } else {
                     (None, Color32::TRANSPARENT)
                 };
@@ -1455,19 +1757,32 @@ impl SocialCountApp {
                     Pos2::new(start1_x + icon1_w / 2.0, box1_rect.center().y),
                     Vec2::splat(11.0),
                 );
-                crate::icons::draw_user_icon(ui.painter(), icon1_rect, Color32::from_rgb(52, 211, 153));
+                crate::icons::draw_user_icon(
+                    ui.painter(),
+                    icon1_rect,
+                    Color32::from_rgb(52, 211, 153),
+                );
 
                 ui.painter().galley(
-                    Pos2::new(start1_x + icon1_w + item_gap, box1_rect.center().y - sub_galley.size().y / 2.0),
+                    Pos2::new(
+                        start1_x + icon1_w + item_gap,
+                        box1_rect.center().y - sub_galley.size().y / 2.0,
+                    ),
                     sub_galley,
                     Color32::from_rgb(209, 250, 229),
                 );
 
-                let mut cur1_x = start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 3.0;
+                let mut cur1_x =
+                    start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 3.0;
                 if sub_increased {
                     let circle_pos = Pos2::new(cur1_x + 2.5, box1_rect.center().y);
-                    ui.painter().circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
-                    ui.painter().circle_stroke(circle_pos, 2.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                    ui.painter()
+                        .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                    ui.painter().circle_stroke(
+                        circle_pos,
+                        2.5,
+                        Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                    );
                     cur1_x += 8.0;
                 }
 
@@ -1481,7 +1796,10 @@ impl SocialCountApp {
 
                 let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
                     if delta_sub != 0 {
-                        format!("Subscribers: {} | Since launch: {:+} (initial: {})", sub_num, delta_sub, init)
+                        format!(
+                            "Subscribers: {} | Since launch: {:+} (initial: {})",
+                            sub_num, delta_sub, init
+                        )
                     } else {
                         format!("Subscribers: {} (no change since launch)", sub_num)
                     }
@@ -1491,19 +1809,13 @@ impl SocialCountApp {
                 box1_resp.on_hover_text(sub_tooltip);
 
                 // --- CENTER: CIRCULAR CHANNEL AVATAR ---
-                let (avatar_rect, avatar_resp) = ui.allocate_exact_size(
-                    Vec2::splat(avatar_size),
-                    egui::Sense::click(),
-                );
+                let (avatar_rect, avatar_resp) =
+                    ui.allocate_exact_size(Vec2::splat(avatar_size), egui::Sense::click());
 
                 if let Some(texture) = self.textures.get(&channel.handle) {
                     let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-                    ui.painter().image(
-                        texture.id(),
-                        avatar_rect,
-                        uv,
-                        Color32::WHITE,
-                    );
+                    ui.painter()
+                        .image(texture.id(), avatar_rect, uv, Color32::WHITE);
 
                     ui.painter().circle_stroke(
                         avatar_rect.center(),
@@ -1516,7 +1828,13 @@ impl SocialCountApp {
                         avatar_size / 2.0,
                         Color32::from_rgb(45, 52, 70),
                     );
-                    let initial = channel.title.chars().next().unwrap_or('?').to_uppercase().to_string();
+                    let initial = channel
+                        .title
+                        .chars()
+                        .next()
+                        .unwrap_or('?')
+                        .to_uppercase()
+                        .to_string();
                     ui.painter().text(
                         avatar_rect.center(),
                         egui::Align2::CENTER_CENTER,
@@ -1530,12 +1848,27 @@ impl SocialCountApp {
                     let _ = open::that(&channel.channel_url);
                 }
                 avatar_resp.on_hover_ui(|ui| {
-                    ui.label(egui::RichText::new(&channel.title).strong().color(Color32::WHITE));
-                    ui.label(egui::RichText::new(&channel.handle).color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(
+                        egui::RichText::new(&channel.title)
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+                    ui.label(
+                        egui::RichText::new(&channel.handle)
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    );
                     if let Some(err) = &channel.error {
-                        ui.label(egui::RichText::new(format!("Error: {} (Retrying in 1m)", err)).size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                        ui.label(
+                            egui::RichText::new(format!("Error: {} (Retrying in 1m)", err))
+                                .size(10.0)
+                                .color(Color32::from_rgb(239, 68, 68)),
+                        );
                     } else if channel.has_error() {
-                        ui.label(egui::RichText::new("Stat unavailable (Retrying in 1m)").size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                        ui.label(
+                            egui::RichText::new("Stat unavailable (Retrying in 1m)")
+                                .size(10.0)
+                                .color(Color32::from_rgb(239, 68, 68)),
+                        );
                     }
                 });
 
@@ -1545,7 +1878,11 @@ impl SocialCountApp {
                 let views_changed = delta_views != 0 || channel.views_changed;
 
                 let (box2_rect, box2_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
-                ui.painter().rect_filled(box2_rect, Rounding::same(5.0), Color32::from_rgb(18, 36, 58));
+                ui.painter().rect_filled(
+                    box2_rect,
+                    Rounding::same(5.0),
+                    Color32::from_rgb(18, 36, 58),
+                );
                 let stroke2_color = if views_increased {
                     Color32::from_rgb(239, 68, 68) // Red border when increased
                 } else if views_changed {
@@ -1554,10 +1891,16 @@ impl SocialCountApp {
                     Color32::from_rgb(96, 165, 250)
                 };
                 let stroke2_width = if views_changed { 1.5_f32 } else { 1.0_f32 };
-                ui.painter().rect_stroke(box2_rect, Rounding::same(5.0), Stroke::new(stroke2_width, stroke2_color));
+                ui.painter().rect_stroke(
+                    box2_rect,
+                    Rounding::same(5.0),
+                    Stroke::new(stroke2_width, stroke2_color),
+                );
 
                 let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254)));
+                let views_galley = ui.fonts(|f| {
+                    f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254))
+                });
                 let icon2_w = 13.0_f32;
 
                 let delta_views_str = crate::youtube::format_compact_delta(delta_views);
@@ -1568,7 +1911,10 @@ impl SocialCountApp {
                     } else {
                         Color32::from_rgb(253, 186, 116)
                     };
-                    (Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))), color)
+                    (
+                        Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))),
+                        color,
+                    )
                 } else {
                     (None, Color32::TRANSPARENT)
                 };
@@ -1582,19 +1928,32 @@ impl SocialCountApp {
                     Pos2::new(start2_x + icon2_w / 2.0, box2_rect.center().y),
                     Vec2::new(13.0, 10.0),
                 );
-                crate::icons::draw_eye_icon(ui.painter(), icon2_rect, Color32::from_rgb(96, 165, 250));
+                crate::icons::draw_eye_icon(
+                    ui.painter(),
+                    icon2_rect,
+                    Color32::from_rgb(96, 165, 250),
+                );
 
                 ui.painter().galley(
-                    Pos2::new(start2_x + icon2_w + item_gap, box2_rect.center().y - views_galley.size().y / 2.0),
+                    Pos2::new(
+                        start2_x + icon2_w + item_gap,
+                        box2_rect.center().y - views_galley.size().y / 2.0,
+                    ),
                     views_galley,
                     Color32::from_rgb(224, 242, 254),
                 );
 
-                let mut cur2_x = start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 3.0;
+                let mut cur2_x =
+                    start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 3.0;
                 if views_increased {
                     let circle_pos = Pos2::new(cur2_x + 2.5, box2_rect.center().y);
-                    ui.painter().circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
-                    ui.painter().circle_stroke(circle_pos, 2.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                    ui.painter()
+                        .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                    ui.painter().circle_stroke(
+                        circle_pos,
+                        2.5,
+                        Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                    );
                     cur2_x += 8.0;
                 }
 
@@ -1608,7 +1967,10 @@ impl SocialCountApp {
 
                 let views_tooltip = if let Some(init) = channel.initial_views_count {
                     if delta_views != 0 {
-                        format!("Views: {} | Since launch: {:+} (initial: {})", views_num, delta_views, init)
+                        format!(
+                            "Views: {} | Since launch: {:+} (initial: {})",
+                            views_num, delta_views, init
+                        )
                     } else {
                         format!("Views: {} (no change since launch)", views_num)
                     }
@@ -1621,15 +1983,18 @@ impl SocialCountApp {
     }
 
     /// Complete Profile Manager (CRUD) modal accessible via right-click or settings button
-    fn render_profile_manager(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, alpha_factor: f32) {
+    fn render_profile_manager(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        alpha_factor: f32,
+    ) {
         let total_w = ui.available_width();
         let header_h = 26.0_f32;
 
         // 1. Header with drag handle and close button
-        let (header_rect, header_resp) = ui.allocate_exact_size(
-            Vec2::new(total_w, header_h),
-            egui::Sense::click_and_drag(),
-        );
+        let (header_rect, header_resp) =
+            ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::click_and_drag());
 
         if header_resp.hovered() {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grab);
@@ -1637,7 +2002,9 @@ impl SocialCountApp {
         if header_resp.dragged() {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
         }
-        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary)
+            || header_resp.dragged_by(egui::PointerButton::Primary)
+        {
             #[cfg(windows)]
             self.start_win32_drag();
             #[cfg(not(windows))]
@@ -1652,15 +2019,28 @@ impl SocialCountApp {
             Color32::from_rgb(255, 255, 255),
         );
 
-        let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
+        let mut header_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(header_rect)
+                .layout(*ui.layout()),
+        );
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+            let close_resp = ui
+                .allocate_response(Vec2::splat(22.0), egui::Sense::click())
                 .on_hover_text("Close");
             let close_hover = close_resp.hovered();
             if close_hover {
-                ui.painter().circle_filled(close_resp.rect.center(), 11.0, Color32::from_rgba_unmultiplied(239, 68, 68, 45));
+                ui.painter().circle_filled(
+                    close_resp.rect.center(),
+                    11.0,
+                    Color32::from_rgba_unmultiplied(239, 68, 68, 45),
+                );
             }
-            let close_color = if close_hover { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(175, 180, 195) };
+            let close_color = if close_hover {
+                Color32::from_rgb(248, 113, 113)
+            } else {
+                Color32::from_rgb(175, 180, 195)
+            };
             ui.painter().text(
                 close_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -1673,7 +2053,9 @@ impl SocialCountApp {
                 self.editing_channel_idx = None;
                 if self.is_compact {
                     let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                        205.0, compact_h,
+                    )));
                 }
             }
         });
@@ -1681,9 +2063,14 @@ impl SocialCountApp {
         // Divider line
         ui.add_space(8.0);
         let sep_alpha = (25.0 * alpha_factor).round() as u8;
-        let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+        let (sep_rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
         if sep_alpha > 0 {
-            ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
+            ui.painter().hline(
+                sep_rect.x_range(),
+                sep_rect.center().y,
+                Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)),
+            );
         }
         ui.add_space(8.0);
 
@@ -1697,12 +2084,17 @@ impl SocialCountApp {
                     .margin(Margin::symmetric(6.0, 4.0)),
             );
 
-            let enter_pressed = input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed =
+                input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let add_btn = ui.add_sized(
                 [80.0, 24.0],
-                egui::Button::new(egui::RichText::new("+ Add").size(12.0).color(Color32::WHITE))
-                    .fill(Color32::from_rgb(37, 99, 235))
-                    .rounding(Rounding::same(5.0)),
+                egui::Button::new(
+                    egui::RichText::new("+ Add")
+                        .size(12.0)
+                        .color(Color32::WHITE),
+                )
+                .fill(Color32::from_rgb(37, 99, 235))
+                .rounding(Rounding::same(5.0)),
             );
 
             if add_btn.clicked() || enter_pressed {
@@ -1714,7 +2106,12 @@ impl SocialCountApp {
                         trimmed.to_string()
                     };
 
-                    if self.config.channels.iter().any(|h| h.eq_ignore_ascii_case(&formatted)) {
+                    if self
+                        .config
+                        .channels
+                        .iter()
+                        .any(|h| h.eq_ignore_ascii_case(&formatted))
+                    {
                         self.profile_error_msg = Some("Channel is already in the list".to_string());
                     } else {
                         self.profile_error_msg = None;
@@ -1738,7 +2135,11 @@ impl SocialCountApp {
 
         if let Some(err) = &self.profile_error_msg {
             ui.add_space(2.0);
-            ui.label(egui::RichText::new(format!("Error: {}", err)).size(11.0).color(Color32::from_rgb(239, 68, 68)));
+            ui.label(
+                egui::RichText::new(format!("Error: {}", err))
+                    .size(11.0)
+                    .color(Color32::from_rgb(239, 68, 68)),
+            );
         }
 
         ui.add_space(6.0);
@@ -1787,40 +2188,63 @@ impl SocialCountApp {
                                     ui.horizontal(|ui| {
                                         ui.add_sized(
                                             [(ui.available_width() - 85.0).max(100.0), 22.0],
-                                            egui::TextEdit::singleline(&mut self.editing_channel_input),
+                                            egui::TextEdit::singleline(
+                                                &mut self.editing_channel_input,
+                                            ),
                                         );
 
                                         if ui.small_button("Save").on_hover_text("Save").clicked() {
-                                            to_save_edit = Some((idx, self.editing_channel_input.trim().to_string()));
+                                            to_save_edit = Some((
+                                                idx,
+                                                self.editing_channel_input.trim().to_string(),
+                                            ));
                                         }
-                                        if ui.small_button("Cancel").on_hover_text("Cancel").clicked() {
+                                        if ui
+                                            .small_button("Cancel")
+                                            .on_hover_text("Cancel")
+                                            .clicked()
+                                        {
                                             self.editing_channel_idx = None;
                                         }
                                     });
                                 } else {
                                     ui.horizontal(|ui| {
                                         // Mini avatar or icon
-                                        let (avatar_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
+                                        let (avatar_rect, _) = ui.allocate_exact_size(
+                                            Vec2::splat(22.0),
+                                            egui::Sense::hover(),
+                                        );
                                         let mut drawn = false;
                                         if let Some(c) = ch_data {
-                                             if let Some(tex) = self.textures.get(&c.handle) {
+                                            if let Some(tex) = self.textures.get(&c.handle) {
                                                 ui.painter().image(
                                                     tex.id(),
                                                     avatar_rect,
-                                                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                                    Rect::from_min_max(
+                                                        Pos2::ZERO,
+                                                        Pos2::new(1.0, 1.0),
+                                                    ),
                                                     Color32::WHITE,
                                                 );
                                                 drawn = true;
                                             }
                                         }
                                         if !drawn {
-                                            crate::icons::draw_youtube_icon(ui.painter(), Rect::from_center_size(avatar_rect.center(), Vec2::new(16.0, 11.5)));
+                                            crate::icons::draw_youtube_icon(
+                                                ui.painter(),
+                                                Rect::from_center_size(
+                                                    avatar_rect.center(),
+                                                    Vec2::new(16.0, 11.5),
+                                                ),
+                                            );
                                         }
 
                                         ui.add_space(4.0);
 
                                         // Title and handle
-                                        let title = ch_data.map(|c| c.title.as_str()).unwrap_or(handle.as_str());
+                                        let title = ch_data
+                                            .map(|c| c.title.as_str())
+                                            .unwrap_or(handle.as_str());
                                         ui.vertical(|ui| {
                                             ui.label(
                                                 egui::RichText::new(title)
@@ -1836,42 +2260,69 @@ impl SocialCountApp {
                                         });
 
                                         // CRUD controls on the right: Move up, Move down, Edit, Delete
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // Delete (D)
-                                            let del_btn = ui.add(
-                                                egui::Button::new(egui::RichText::new("Delete").size(10.5).color(Color32::from_rgb(248, 113, 113)))
-                                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 25))
-                                                    .rounding(Rounding::same(4.0)),
-                                            ).on_hover_text("Delete channel");
-                                            if del_btn.clicked() {
-                                                to_delete_idx = Some(idx);
-                                            }
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // Delete (D)
+                                                let del_btn = ui
+                                                    .add(
+                                                        egui::Button::new(
+                                                            egui::RichText::new("Delete")
+                                                                .size(10.5)
+                                                                .color(Color32::from_rgb(
+                                                                    248, 113, 113,
+                                                                )),
+                                                        )
+                                                        .fill(Color32::from_rgba_unmultiplied(
+                                                            239, 68, 68, 25,
+                                                        ))
+                                                        .rounding(Rounding::same(4.0)),
+                                                    )
+                                                    .on_hover_text("Delete channel");
+                                                if del_btn.clicked() {
+                                                    to_delete_idx = Some(idx);
+                                                }
 
-                                            // Edit (U)
-                                            let edit_btn = ui.add(
-                                                egui::Button::new(egui::RichText::new("Edit").size(10.5).color(Color32::from_rgb(147, 197, 253)))
-                                                    .fill(Color32::from_white_alpha(15))
-                                                    .rounding(Rounding::same(4.0)),
-                                            ).on_hover_text("Edit handle");
-                                            if edit_btn.clicked() {
-                                                self.editing_channel_idx = Some(idx);
-                                                self.editing_channel_input = handle.clone();
-                                            }
+                                                // Edit (U)
+                                                let edit_btn = ui
+                                                    .add(
+                                                        egui::Button::new(
+                                                            egui::RichText::new("Edit")
+                                                                .size(10.5)
+                                                                .color(Color32::from_rgb(
+                                                                    147, 197, 253,
+                                                                )),
+                                                        )
+                                                        .fill(Color32::from_white_alpha(15))
+                                                        .rounding(Rounding::same(4.0)),
+                                                    )
+                                                    .on_hover_text("Edit handle");
+                                                if edit_btn.clicked() {
+                                                    self.editing_channel_idx = Some(idx);
+                                                    self.editing_channel_input = handle.clone();
+                                                }
 
-                                            // Move down (U - Reorder)
-                                            if idx + 1 < self.config.channels.len()
-                                                && ui.small_button("▼").on_hover_text("Move down").clicked()
-                                            {
-                                                to_move_down_idx = Some(idx);
-                                            }
+                                                // Move down (U - Reorder)
+                                                if idx + 1 < self.config.channels.len()
+                                                    && ui
+                                                        .small_button("▼")
+                                                        .on_hover_text("Move down")
+                                                        .clicked()
+                                                {
+                                                    to_move_down_idx = Some(idx);
+                                                }
 
-                                            // Move up (U - Reorder)
-                                            if idx > 0
-                                                && ui.small_button("▲").on_hover_text("Move up").clicked()
-                                            {
-                                                to_move_up_idx = Some(idx);
-                                            }
-                                        });
+                                                // Move up (U - Reorder)
+                                                if idx > 0
+                                                    && ui
+                                                        .small_button("▲")
+                                                        .on_hover_text("Move up")
+                                                        .clicked()
+                                                {
+                                                    to_move_up_idx = Some(idx);
+                                                }
+                                            },
+                                        );
                                     });
                                 }
                             });
@@ -1945,8 +2396,11 @@ impl SocialCountApp {
                     self.show_profile_manager = false;
                     self.editing_channel_idx = None;
                     if self.is_compact {
-                        let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(205.0, compact_h)));
+                        let compact_h =
+                            (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                            205.0, compact_h,
+                        )));
                     }
                 }
             });

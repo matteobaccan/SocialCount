@@ -77,7 +77,7 @@ impl Config {
             .join(",\n");
 
         let content = format!(
-r#"# SocialCount configuration file
+            r#"# SocialCount configuration file
 # List of YouTube channels to monitor (handles with or without @)
 channels = [
 {channels_formatted}
@@ -140,12 +140,18 @@ window_height = {height:.1}
                     cfg
                 }
                 Err(err) => {
-                    eprintln!("Error parsing {}: {}. Using default values.", CONFIG_FILENAME, err);
+                    eprintln!(
+                        "Error parsing {}: {}. Using default values.",
+                        CONFIG_FILENAME, err
+                    );
                     Config::default()
                 }
             },
             Err(err) => {
-                eprintln!("Error reading {}: {}. Using default values.", CONFIG_FILENAME, err);
+                eprintln!(
+                    "Error reading {}: {}. Using default values.",
+                    CONFIG_FILENAME, err
+                );
                 Config::default()
             }
         }

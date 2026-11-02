@@ -167,8 +167,8 @@ impl YouTubeFetcher {
             .ok_or_else(|| "ytInitialData closing script tag not found".to_string())?;
 
         let json_str = &html[start_idx..end_idx];
-        let json: Value = serde_json::from_str(json_str)
-            .map_err(|e| format!("JSON decode error: {}", e))?;
+        let json: Value =
+            serde_json::from_str(json_str).map_err(|e| format!("JSON decode error: {}", e))?;
 
         // Extract title
         let title = json
@@ -187,8 +187,15 @@ impl YouTubeFetcher {
 
         // Extract avatar URL
         let mut avatar_url = String::new();
-        if let Some(thumbs) = json.pointer("/metadata/channelMetadataRenderer/avatar/thumbnails").and_then(|v| v.as_array()) {
-            if let Some(last) = thumbs.last().and_then(|t| t.get("url")).and_then(|u| u.as_str()) {
+        if let Some(thumbs) = json
+            .pointer("/metadata/channelMetadataRenderer/avatar/thumbnails")
+            .and_then(|v| v.as_array())
+        {
+            if let Some(last) = thumbs
+                .last()
+                .and_then(|t| t.get("url"))
+                .and_then(|u| u.as_str())
+            {
                 avatar_url = last.to_string();
             }
         }
@@ -299,11 +306,19 @@ fn find_key_recursive<'a>(value: &'a Value, target_key: &str) -> Option<&'a Valu
 
 pub fn clean_stat_number(text: &str) -> String {
     let words_to_remove = [
-        "subscribers", "subscriber", "subs",
-        "views", "view",
-        "video", "videos",
-        "visualizzazioni", "visualizzazion*", "visualizzazion",
-        "iscritti", "iscritt*", "iscritt",
+        "subscribers",
+        "subscriber",
+        "subs",
+        "views",
+        "view",
+        "video",
+        "videos",
+        "visualizzazioni",
+        "visualizzazion*",
+        "visualizzazion",
+        "iscritti",
+        "iscritt*",
+        "iscritt",
     ];
 
     let mut cleaned = text.to_string();
@@ -338,15 +353,20 @@ pub fn parse_subscriber_count(text: &str) -> u64 {
     let lower = text.to_lowercase();
 
     // Determine multiplier (order matters to avoid 'm' matching 'mila')
-    let multiplier: f64 = if lower.contains("mrd") || lower.contains("miliard") || lower.contains("billion") {
-        1_000_000_000.0
-    } else if lower.contains("mila") || lower.contains("thousand") || lower.contains('k') {
-        1_000.0
-    } else if lower.contains("mln") || lower.contains("milion") || lower.contains("million") || lower.contains('m') {
-        1_000_000.0
-    } else {
-        1.0
-    };
+    let multiplier: f64 =
+        if lower.contains("mrd") || lower.contains("miliard") || lower.contains("billion") {
+            1_000_000_000.0
+        } else if lower.contains("mila") || lower.contains("thousand") || lower.contains('k') {
+            1_000.0
+        } else if lower.contains("mln")
+            || lower.contains("milion")
+            || lower.contains("million")
+            || lower.contains('m')
+        {
+            1_000_000.0
+        } else {
+            1.0
+        };
 
     // Extract digits and decimal point/comma
     let mut num_str = String::new();

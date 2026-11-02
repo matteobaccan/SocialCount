@@ -19,7 +19,10 @@ fn main() -> eframe::Result<()> {
         let compact_h = (20.0 + config.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
         egui::Vec2::new(205.0, compact_h)
     } else {
-        egui::Vec2::new(config.window_width.max(280.0), config.window_height.max(160.0))
+        egui::Vec2::new(
+            config.window_width.max(280.0),
+            config.window_height.max(160.0),
+        )
     };
 
     let options = eframe::NativeOptions {
