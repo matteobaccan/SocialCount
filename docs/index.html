@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SocialCount - Real-Time YouTube Channel Statistics Widget</title>
+  <meta name="description" content="A modern, lightweight, transparent, always-on-top desktop widget developed in Rust to monitor YouTube channel statistics in real time.">
+  <link rel="icon" type="image/png" href="assets/logo.png">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="SocialCount - Real-Time YouTube Channel Statistics Widget">
+  <meta property="og:description" content="Modern, transparent, always-on-top desktop widget in Rust for tracking YouTube subscribers and views in real time.">
+  <meta property="og:image" content="assets/socialcount-banner.png">
+  <meta property="og:url" content="https://matteobaccan.github.io/SocialCount/">
+  <meta property="og:type" content="website">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #0b0d14;
+      --card-bg: rgba(18, 22, 34, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent-red: #ff2323;
+      --accent-green: #34d399;
+      --accent-green-bg: #102c1c;
+      --accent-blue: #60a5fa;
+      --accent-blue-bg: #12243a;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --glow: rgba(255, 35, 35, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(239, 68, 68, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 30%, rgba(96, 165, 250, 0.06) 0%, transparent 45%),
+        radial-gradient(circle at 50% 85%, rgba(52, 211, 153, 0.05) 0%, transparent 50%);
+    }
+
+    /* Header Nav */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(11, 13, 20, 0.82);
+      border-bottom: 1px solid var(--card-border);
+      padding: 0.9rem 2rem;
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+      font-weight: 800;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand img {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.8rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: #fff;
+    }
+
+    .btn-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .btn-github:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-1px);
+    }
+
+    /* Container */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 3.5rem 0 2rem;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0.35rem 0.95rem;
+      background: rgba(255, 35, 35, 0.1);
+      border: 1px solid rgba(255, 35, 35, 0.25);
+      border-radius: 999px;
+      color: #fca5a5;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+
+    .badge-dot {
+      width: 7px;
+      height: 7px;
+      background: var(--accent-red);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-red);
+    }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 5.5vw, 4.2rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.1;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      color: var(--text-muted);
+      max-width: 760px;
+      margin: 0 auto 2.2rem;
+      font-weight: 400;
+    }
+
+    .cta-group {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: #fff;
+      padding: 0.85rem 1.75rem;
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      font-size: 1rem;
+      text-decoration: none;
+      box-shadow: 0 8px 24px rgba(220, 38, 38, 0.35);
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(220, 38, 38, 0.5);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 0.85rem 1.5rem;
+      border-radius: var(--radius-md);
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+
+    /* Hero Banner Image */
+    .hero-banner {
+      position: relative;
+      margin: 0 auto 4rem;
+      max-width: 1080px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--card-border);
+    }
+
+    .hero-banner img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Screenshots Showcase */
+    .section-title {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-title h2 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.6rem;
+    }
+
+    .section-title p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 5rem;
+    }
+
+    @media (max-width: 860px) {
+      .showcase-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .showcase-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 1.75rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      transition: transform 0.25s, border-color 0.25s;
+    }
+
+    .showcase-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .showcase-card h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.4rem;
+      font-weight: 700;
+    }
+
+    .showcase-card span {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .showcase-card img {
+      width: 100%;
+      max-width: 440px;
+      height: auto;
+      border-radius: var(--radius-md);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Features Grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 5rem;
+    }
+
+    .feature-box {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 1.75rem;
+      backdrop-filter: blur(12px);
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .feature-box:hover {
+      transform: translateY(-3px);
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      margin-bottom: 1.1rem;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+    }
+
+    .feature-box h4 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-box p {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      line-height: 1.55;
+    }
+
+    /* Configuration / Code Section */
+    .config-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      margin-bottom: 5rem;
+    }
+
+    .code-block {
+      background: #06080e;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius-sm);
+      padding: 1.25rem 1.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      color: #e2e8f0;
+      overflow-x: auto;
+      margin-top: 1.25rem;
+      line-height: 1.5;
+    }
+
+    .code-comment { color: #64748b; }
+    .code-key { color: #93c5fd; }
+    .code-val { color: #86efac; }
+    .code-str { color: #fde047; }
+
+    /* Shortcuts Table */
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      margin-top: 1.5rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--card-border);
+      font-size: 0.95rem;
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      letter-spacing: 0.05em;
+    }
+
+    kbd {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 5px;
+      padding: 0.2rem 0.45rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      color: #f1f5f9;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    footer a:hover {
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="#" class="brand">
+        <img src="assets/logo.png" alt="SocialCount Logo">
+        <span>SocialCount</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#screenshots">Screenshots</a></li>
+        <li><a href="#config">Configuration</a></li>
+        <li><a href="#shortcuts">Shortcuts</a></li>
+        <li>
+          <a href="https://github.com/matteobaccan/SocialCount" target="_blank" rel="noopener" class="btn-github">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            GitHub
+          </a>
+        </li>
+      </ul>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <main class="container">
+    <section class="hero">
+      <div class="badge-pill">
+        <span class="badge-dot"></span>
+        <span>SocialCount v1.0.0 is Live</span>
+      </div>
+
+      <h1>Real-Time YouTube Statistics<br>Floating on Your Desktop</h1>
+      <p>
+        A modern, transparent, always-on-top widget developed in Rust. Monitor subscriber counts and view numbers live with zero distraction and instant readability.
+      </p>
+
+      <div class="cta-group">
+        <a href="https://github.com/matteobaccan/SocialCount/releases/latest" class="btn-primary" target="_blank" rel="noopener">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          Download Latest Release
+        </a>
+        <a href="#features" class="btn-secondary">
+          Explore Features
+        </a>
+      </div>
+
+      <div class="hero-banner">
+        <img src="assets/socialcount-banner.png" alt="SocialCount Showcase Banner">
+      </div>
+    </section>
+
+    <!-- Screenshots Showcase -->
+    <section id="screenshots">
+      <div class="section-title">
+        <h2>Dual Interface Modes</h2>
+        <p>Switch instantly between detailed glassmorphism and minimalist ultra-compact views.</p>
+      </div>
+
+      <div class="showcase-grid">
+        <div class="showcase-card">
+          <h3>Full Glassmorphism Mode</h3>
+          <span>Title, opacity slider, circular avatars, and dedicated counter pills</span>
+          <img src="assets/screenshot-normal.png" alt="SocialCount Normal View">
+        </div>
+        <div class="showcase-card">
+          <h3>Ultra-Compact Mode (Double-Click)</h3>
+          <span>Minimalist footprint: central circular avatar flanked by solid stat pills</span>
+          <img src="assets/screenshot-compact.png" alt="SocialCount Compact View">
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features">
+      <div class="section-title">
+        <h2>Crafted for Performance & Elegance</h2>
+        <p>Engineered in Rust with native Win32 coordinate sync, pure vector graphics, and zero external runtime dependencies.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #38bdf8;">🪟</div>
+          <h4>Transparent & Frameless</h4>
+          <p>Clean system chrome-free window with native transparency and soft ambient drop shadows that blends seamlessly onto any desktop wallpaper.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #f59e0b;">📌</div>
+          <h4>Always on Top</h4>
+          <p>Floats effortlessly above all active full-screen windows during programming, video editing, streaming, or gaming sessions.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #34d399;">🛡️</div>
+          <h4>Solid Stat Counter Pills</h4>
+          <p>Zero emojis. Crisp vector user silhouettes and eye icons with catchlight highlights. Always 100% opaque for maximum legibility at any transparency.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #a78bfa;">🌓</div>
+          <h4>Continuous Opacity Slider</h4>
+          <p>Smooth real-time opacity adjustment from 0% (fully transparent) to 100% (opaque). At 0% opacity, only avatars and stat pills float on screen.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #ef4444;">⚡</div>
+          <h4>Ultra-Compact Toggle</h4>
+          <p>Double-click the title bar to collapse the widget into micro mode: headers and footers fade away, leaving only the circular channel icon and counters.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #3b82f6;">🖥️</div>
+          <h4>Anti-Ballooning Multi-Screen Drag</h4>
+          <p>Win32 direct coordinate manipulation with <code>SWP_NOSIZE</code> prevents Aero Snap dockings and resizing glitches when dragged across multi-monitor setups with different DPIs.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #ec4899;">⚙️</div>
+          <h4>Full CRUD Profile Manager</h4>
+          <p>Right-click anywhere or click the ⚙ header icon to add channels (auto-formatted with <code>@</code>), edit handles inline, reorder with up/down arrows, or remove profiles.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #f43f5e;">🚨</div>
+          <h4>Real-Time Change Detection</h4>
+          <p>Automatically pulses a distinct red border around subscriber or view count pills whenever numbers change between polling intervals.</p>
+        </div>
+
+        <div class="feature-box">
+          <div class="feature-icon" style="color: #10b981;">🔄</div>
+          <h4>1-Minute Smart Retry</h4>
+          <p>If network hiccup or temporary rate limiting causes an unavailable stat (N/A / N/D), SocialCount retries automatically in 60s instead of waiting the full 5m cycle.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Configuration Section -->
+    <section id="config" class="config-section">
+      <div class="section-title" style="margin-bottom: 1.5rem;">
+        <h2>Simple TOML Configuration</h2>
+        <p>Configured via <code>channels.toml</code> in the working directory. Changes can be made on the fly or through the in-app profile manager.</p>
+      </div>
+
+      <div class="code-block">
+<span class="code-comment"># SocialCount configuration file</span>
+<span class="code-comment"># List of YouTube channels to monitor (handles with or without @)</span>
+<span class="code-key">channels</span> = [
+    <span class="code-str">"@matteobaccan"</span>
+]
+
+<span class="code-comment"># Automatic refresh interval in seconds (default: 300 = 5 minutes)</span>
+<span class="code-key">refresh_interval_secs</span> = <span class="code-val">300</span>
+
+<span class="code-comment"># Background opacity (0 = fully transparent, 255 = opaque, default: 190)</span>
+<span class="code-key">card_opacity</span> = <span class="code-val">190</span>
+
+<span class="code-comment"># Compact mode (true = compact widget, false = full view)</span>
+<span class="code-key">compact_mode</span> = <span class="code-val">false</span>
+
+<span class="code-comment"># Window dimensions (width and height in logical pixels)</span>
+<span class="code-key">window_width</span> = <span class="code-val">360.0</span>
+<span class="code-key">window_height</span> = <span class="code-val">440.0</span>
+      </div>
+    </section>
+
+    <!-- Shortcuts Section -->
+    <section id="shortcuts" style="margin-bottom: 5rem;">
+      <div class="section-title">
+        <h2>Mouse & Keyboard Shortcuts</h2>
+        <p>Intuitive gestures designed for rapid desktop control.</p>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Trigger</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Move Window</strong></td>
+              <td><kbd>Left Click + Drag</kbd> on header</td>
+              <td>Smooth multi-screen positioning without Aero Snap snapping or DPI ballooning</td>
+            </tr>
+            <tr>
+              <td><strong>Toggle Compact View</strong></td>
+              <td><kbd>Double Click</kbd> on title bar</td>
+              <td>Instantly shrink into micro widget or expand back to full view</td>
+            </tr>
+            <tr>
+              <td><strong>Channel Manager (CRUD)</strong></td>
+              <td><kbd>Right Click</kbd> anywhere or <kbd>⚙</kbd></td>
+              <td>Open modal to add, edit, reorder, or delete YouTube channels</td>
+            </tr>
+            <tr>
+              <td><strong>Refresh Statistics</strong></td>
+              <td>Click <kbd>⟳</kbd></td>
+              <td>Immediately triggers background data fetch for all monitored channels</td>
+            </tr>
+            <tr>
+              <td><strong>Resize Window</strong></td>
+              <td><kbd>Drag</kbd> bottom-right corner grip</td>
+              <td>Proportionally scales window dimensions and adapts counter pills</td>
+            </tr>
+            <tr>
+              <td><strong>Open Channel</strong></td>
+              <td><kbd>Left Click</kbd> on avatar or title</td>
+              <td>Opens the YouTube channel directly in your default web browser</td>
+            </tr>
+            <tr>
+              <td><strong>Close Widget</strong></td>
+              <td>Click <kbd>✕</kbd></td>
+              <td>Saves geometry, opacity, and compact state to <code>channels.toml</code> and quits</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <p>
+      <strong>SocialCount</strong> is open source software created by 
+      <a href="https://github.com/matteobaccan" target="_blank" rel="noopener">Matteo Baccan</a>.
+    </p>
+    <p style="margin-top: 0.5rem;">
+      Licensed under the <a href="https://github.com/matteobaccan/SocialCount/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.
+      Available on <a href="https://github.com/matteobaccan/SocialCount" target="_blank" rel="noopener">GitHub</a>.
+    </p>
+  </footer>
+
+</body>
+</html>
