@@ -11,7 +11,10 @@ pub struct ChannelData {
     pub title: String,
     pub subscriber_text: String,
     pub subscriber_count: u64,
+    pub initial_subscriber_count: Option<u64>,
     pub views_text: String,
+    pub views_count: u64,
+    pub initial_views_count: Option<u64>,
     #[allow(dead_code)]
     pub video_count_text: String,
     pub avatar_url: String,
@@ -31,7 +34,10 @@ impl ChannelData {
             title: handle.trim_start_matches('@').to_string(),
             subscriber_text: "Loading...".to_string(),
             subscriber_count: 0,
+            initial_subscriber_count: None,
             views_text: "-".to_string(),
+            views_count: 0,
+            initial_views_count: None,
             video_count_text: "-".to_string(),
             avatar_url: String::new(),
             avatar_bytes: None,
@@ -41,6 +47,20 @@ impl ChannelData {
             views_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
+        }
+    }
+
+    pub fn delta_subscribers(&self) -> i64 {
+        match self.initial_subscriber_count {
+            Some(init) => self.subscriber_count as i64 - init as i64,
+            None => 0,
+        }
+    }
+
+    pub fn delta_views(&self) -> i64 {
+        match self.initial_views_count {
+            Some(init) => self.views_count as i64 - init as i64,
+            None => 0,
         }
     }
 
@@ -228,13 +248,17 @@ impl YouTubeFetcher {
         }
 
         let subscriber_count = parse_subscriber_count(&subscriber_text);
+        let views_count = parse_subscriber_count(&views_text);
 
         Ok(ChannelData {
             handle: handle.to_string(),
             title,
             subscriber_text,
             subscriber_count,
+            initial_subscriber_count: None,
             views_text,
+            views_count,
+            initial_views_count: None,
             video_count_text,
             avatar_url,
             avatar_bytes: None,
@@ -341,19 +365,40 @@ pub fn parse_subscriber_count(text: &str) -> u64 {
         }
     }
 
-    // Clean up multiple dots if formatted like 1.250.000
-    let dots = num_str.chars().filter(|&c| c == '.').count();
-    let normalized = if dots > 1 {
-        // Thousand separators without decimal
+    let normalized = if (multiplier - 1.0).abs() < f64::EPSILON {
+        // Multiplier is 1.0 (no unit suffix): all dots/commas are thousand separators
         num_str.replace('.', "")
     } else {
-        num_str
+        // Clean up multiple dots if formatted like 1.250.000
+        let dots = num_str.chars().filter(|&c| c == '.').count();
+        if dots > 1 {
+            num_str.replace('.', "")
+        } else {
+            num_str
+        }
     };
 
     if let Ok(val) = normalized.parse::<f64>() {
         (val * multiplier).round() as u64
     } else {
         0
+    }
+}
+
+pub fn format_compact_delta(delta: i64) -> String {
+    if delta == 0 {
+        return String::new();
+    }
+    let abs_val = delta.unsigned_abs();
+    let sign = if delta > 0 { "+" } else { "-" };
+    if abs_val >= 1_000_000_000 {
+        format!("{}{:.1}B", sign, abs_val as f64 / 1_000_000_000.0)
+    } else if abs_val >= 1_000_000 {
+        format!("{}{:.1}M", sign, abs_val as f64 / 1_000_000.0)
+    } else if abs_val >= 10_000 {
+        format!("{}{:.1}K", sign, abs_val as f64 / 1_000.0)
+    } else {
+        format!("{}{}", sign, abs_val)
     }
 }
 
@@ -409,6 +454,35 @@ mod tests {
         assert_eq!(parse_subscriber_count("10M subscribers"), 10000000);
         assert_eq!(parse_subscriber_count("1.250.000 iscritti"), 1250000);
         assert_eq!(parse_subscriber_count("1,250,000 subscribers"), 1250000);
+        // Views parsing
+        assert_eq!(parse_subscriber_count("2507 visualizzazioni"), 2507);
+        assert_eq!(parse_subscriber_count("2,507 views"), 2507);
+        assert_eq!(parse_subscriber_count("2.507 visualizzazioni"), 2507);
+        assert_eq!(parse_subscriber_count("15.2K views"), 15200);
+    }
+
+    #[test]
+    fn test_delta_and_format() {
+        let mut ch = ChannelData::new_loading("@test");
+        assert_eq!(ch.delta_subscribers(), 0);
+        assert_eq!(ch.delta_views(), 0);
+
+        ch.initial_subscriber_count = Some(25);
+        ch.subscriber_count = 26;
+        assert_eq!(ch.delta_subscribers(), 1);
+        assert_eq!(format_compact_delta(ch.delta_subscribers()), "+1");
+
+        ch.subscriber_count = 24;
+        assert_eq!(ch.delta_subscribers(), -1);
+        assert_eq!(format_compact_delta(ch.delta_subscribers()), "-1");
+
+        ch.initial_views_count = Some(2000);
+        ch.views_count = 2150;
+        assert_eq!(ch.delta_views(), 150);
+        assert_eq!(format_compact_delta(ch.delta_views()), "+150");
+
+        assert_eq!(format_compact_delta(0), "");
+        assert_eq!(format_compact_delta(15000), "+15.0K");
     }
 
     #[test]

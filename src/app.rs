@@ -417,6 +417,18 @@ impl SocialCountApp {
                     if let Some(pos) = self.channels.iter().position(|c| c.handle == new_data.handle) {
                         let old = &self.channels[pos];
 
+                        // Retain initial baseline counts recorded at launch
+                        new_data.initial_subscriber_count = old.initial_subscriber_count;
+                        new_data.initial_views_count = old.initial_views_count;
+
+                        // Set initial baseline if not yet recorded and current value > 0
+                        if new_data.initial_subscriber_count.is_none() && new_data.subscriber_count > 0 {
+                            new_data.initial_subscriber_count = Some(new_data.subscriber_count);
+                        }
+                        if new_data.initial_views_count.is_none() && new_data.views_count > 0 {
+                            new_data.initial_views_count = Some(new_data.views_count);
+                        }
+
                         // Preserve avatar and title if new fetch failed or lacked image
                         if new_data.avatar_bytes.is_none() && old.avatar_bytes.is_some() {
                             new_data.avatar_bytes = old.avatar_bytes.clone();
@@ -437,18 +449,29 @@ impl SocialCountApp {
                         }
 
                         // Detect if view count changed compared to previous value
-                        let old_views_clean = crate::youtube::clean_stat_number(&old.views_text);
-                        let new_views_clean = crate::youtube::clean_stat_number(&new_data.views_text);
-                        if !old_views_clean.is_empty() && old_views_clean != "-" && !new_views_clean.is_empty() && new_views_clean != "-" && old_views_clean != new_views_clean {
+                        if old.views_count > 0 && new_data.views_count > 0 && new_data.views_count != old.views_count {
                             new_data.views_changed = true;
                             new_data.views_changed_at = Some(Instant::now());
                         } else {
-                            new_data.views_changed = old.views_changed;
-                            new_data.views_changed_at = old.views_changed_at;
+                            let old_views_clean = crate::youtube::clean_stat_number(&old.views_text);
+                            let new_views_clean = crate::youtube::clean_stat_number(&new_data.views_text);
+                            if !old_views_clean.is_empty() && old_views_clean != "-" && !new_views_clean.is_empty() && new_views_clean != "-" && old_views_clean != new_views_clean {
+                                new_data.views_changed = true;
+                                new_data.views_changed_at = Some(Instant::now());
+                            } else {
+                                new_data.views_changed = old.views_changed;
+                                new_data.views_changed_at = old.views_changed_at;
+                            }
                         }
 
                         self.channels[pos] = new_data;
                     } else {
+                        if new_data.initial_subscriber_count.is_none() && new_data.subscriber_count > 0 {
+                            new_data.initial_subscriber_count = Some(new_data.subscriber_count);
+                        }
+                        if new_data.initial_views_count.is_none() && new_data.views_count > 0 {
+                            new_data.initial_views_count = Some(new_data.views_count);
+                        }
                         self.channels.push(new_data);
                     }
 
@@ -1204,22 +1227,44 @@ impl SocialCountApp {
                         ui.spacing_mut().item_spacing.x = gap;
 
                         // Users/Subscribers Box
-                        let (box1_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+                        let delta_sub = channel.delta_subscribers();
+                        let sub_increased = delta_sub > 0;
+                        let sub_changed = delta_sub != 0 || channel.sub_changed;
+
+                        let (box1_rect, box1_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                         ui.painter().rect_filled(box1_rect, Rounding::same(8.0), Color32::from_rgb(16, 44, 28));
-                        let stroke1_color = if channel.sub_changed {
-                            Color32::from_rgb(239, 68, 68) // Red border if number changed
+                        let stroke1_color = if sub_increased {
+                            Color32::from_rgb(239, 68, 68) // Red border when increased
+                        } else if sub_changed {
+                            Color32::from_rgb(249, 115, 22) // Orange border when decreased
                         } else {
                             Color32::from_rgb(52, 211, 153)
                         };
-                        let stroke1_width = if channel.sub_changed { 1.8_f32 } else { 1.0_f32 };
+                        let stroke1_width = if sub_changed { 1.8_f32 } else { 1.0_f32 };
                         ui.painter().rect_stroke(box1_rect, Rounding::same(8.0), Stroke::new(stroke1_width, stroke1_color));
 
                         let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
                         let font_id = egui::FontId::proportional(13.0);
-                        let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num, font_id.clone(), Color32::from_rgb(209, 250, 229)));
+                        let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num.clone(), font_id.clone(), Color32::from_rgb(209, 250, 229)));
                         let icon1_w = 14.0_f32;
                         let item_gap = 5.0_f32;
-                        let total1_w = icon1_w + item_gap + sub_galley.size().x;
+
+                        let delta_sub_str = crate::youtube::format_compact_delta(delta_sub);
+                        let (delta1_galley, delta1_color) = if !delta_sub_str.is_empty() {
+                            let delta_font = egui::FontId::proportional(11.0);
+                            let color = if sub_increased {
+                                Color32::from_rgb(252, 165, 165)
+                            } else {
+                                Color32::from_rgb(253, 186, 116)
+                            };
+                            (Some(ui.fonts(|f| f.layout_no_wrap(delta_sub_str, delta_font, color))), color)
+                        } else {
+                            (None, Color32::TRANSPARENT)
+                        };
+
+                        let circle1_w = if sub_increased { 10.0_f32 } else { 0.0_f32 };
+                        let delta1_w = delta1_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+                        let total1_w = icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
                         let start1_x = box1_rect.center().x - total1_w / 2.0;
 
                         let icon1_rect = Rect::from_center_size(
@@ -1234,21 +1279,70 @@ impl SocialCountApp {
                             Color32::from_rgb(209, 250, 229),
                         );
 
+                        let mut cur1_x = start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 5.0;
+                        if sub_increased {
+                            let circle_pos = Pos2::new(cur1_x + 3.5, box1_rect.center().y);
+                            ui.painter().circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                            ui.painter().circle_stroke(circle_pos, 3.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                            cur1_x += 10.0;
+                        }
+
+                        if let Some(galley) = delta1_galley {
+                            ui.painter().galley(
+                                Pos2::new(cur1_x, box1_rect.center().y - galley.size().y / 2.0),
+                                galley,
+                                delta1_color,
+                            );
+                        }
+
+                        let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
+                            if delta_sub != 0 {
+                                format!("Subscribers: {} | Since launch: {:+} (initial: {})", sub_num, delta_sub, init)
+                            } else {
+                                format!("Subscribers: {} (no change since launch)", sub_num)
+                            }
+                        } else {
+                            format!("Subscribers: {}", sub_num)
+                        };
+                        box1_resp.on_hover_text(sub_tooltip);
+
                         // Views Box
-                        let (box2_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+                        let delta_views = channel.delta_views();
+                        let views_increased = delta_views > 0;
+                        let views_changed = delta_views != 0 || channel.views_changed;
+
+                        let (box2_rect, box2_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                         ui.painter().rect_filled(box2_rect, Rounding::same(8.0), Color32::from_rgb(18, 36, 58));
-                        let stroke2_color = if channel.views_changed {
-                            Color32::from_rgb(239, 68, 68) // Red border if number changed
+                        let stroke2_color = if views_increased {
+                            Color32::from_rgb(239, 68, 68) // Red border when increased
+                        } else if views_changed {
+                            Color32::from_rgb(249, 115, 22) // Orange border when decreased
                         } else {
                             Color32::from_rgb(96, 165, 250)
                         };
-                        let stroke2_width = if channel.views_changed { 1.8_f32 } else { 1.0_f32 };
+                        let stroke2_width = if views_changed { 1.8_f32 } else { 1.0_f32 };
                         ui.painter().rect_stroke(box2_rect, Rounding::same(8.0), Stroke::new(stroke2_width, stroke2_color));
 
                         let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                        let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num, font_id, Color32::from_rgb(224, 242, 254)));
+                        let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254)));
                         let icon2_w = 16.0_f32;
-                        let total2_w = icon2_w + item_gap + views_galley.size().x;
+
+                        let delta_views_str = crate::youtube::format_compact_delta(delta_views);
+                        let (delta2_galley, delta2_color) = if !delta_views_str.is_empty() {
+                            let delta_font = egui::FontId::proportional(11.0);
+                            let color = if views_increased {
+                                Color32::from_rgb(252, 165, 165)
+                            } else {
+                                Color32::from_rgb(253, 186, 116)
+                            };
+                            (Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))), color)
+                        } else {
+                            (None, Color32::TRANSPARENT)
+                        };
+
+                        let circle2_w = if views_increased { 10.0_f32 } else { 0.0_f32 };
+                        let delta2_w = delta2_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+                        let total2_w = icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
                         let start2_x = box2_rect.center().x - total2_w / 2.0;
 
                         let icon2_rect = Rect::from_center_size(
@@ -1262,6 +1356,33 @@ impl SocialCountApp {
                             views_galley,
                             Color32::from_rgb(224, 242, 254),
                         );
+
+                        let mut cur2_x = start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 5.0;
+                        if views_increased {
+                            let circle_pos = Pos2::new(cur2_x + 3.5, box2_rect.center().y);
+                            ui.painter().circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                            ui.painter().circle_stroke(circle_pos, 3.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                            cur2_x += 10.0;
+                        }
+
+                        if let Some(galley) = delta2_galley {
+                            ui.painter().galley(
+                                Pos2::new(cur2_x, box2_rect.center().y - galley.size().y / 2.0),
+                                galley,
+                                delta2_color,
+                            );
+                        }
+
+                        let views_tooltip = if let Some(init) = channel.initial_views_count {
+                            if delta_views != 0 {
+                                format!("Views: {} | Since launch: {:+} (initial: {})", views_num, delta_views, init)
+                            } else {
+                                format!("Views: {} (no change since launch)", views_num)
+                            }
+                        } else {
+                            format!("Views: {}", views_num)
+                        };
+                        box2_resp.on_hover_text(views_tooltip);
                     });
                 });
             });
@@ -1299,22 +1420,44 @@ impl SocialCountApp {
                 ui.spacing_mut().item_spacing.x = gap;
 
                 // --- LEFT CORNER: USERS / SUBSCRIBERS COUNTER ---
-                let (box1_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+                let delta_sub = channel.delta_subscribers();
+                let sub_increased = delta_sub > 0;
+                let sub_changed = delta_sub != 0 || channel.sub_changed;
+
+                let (box1_rect, box1_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                 ui.painter().rect_filled(box1_rect, Rounding::same(5.0), Color32::from_rgb(16, 44, 28));
-                let stroke1_color = if channel.sub_changed {
-                    Color32::from_rgb(239, 68, 68) // Red border if number changed
+                let stroke1_color = if sub_increased {
+                    Color32::from_rgb(239, 68, 68) // Red border when increased
+                } else if sub_changed {
+                    Color32::from_rgb(249, 115, 22) // Orange border when decreased
                 } else {
                     Color32::from_rgb(52, 211, 153)
                 };
-                let stroke1_width = if channel.sub_changed { 1.5_f32 } else { 1.0_f32 };
+                let stroke1_width = if sub_changed { 1.5_f32 } else { 1.0_f32 };
                 ui.painter().rect_stroke(box1_rect, Rounding::same(5.0), Stroke::new(stroke1_width, stroke1_color));
 
                 let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
                 let font_id = egui::FontId::proportional(11.0);
-                let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num, font_id.clone(), Color32::from_rgb(209, 250, 229)));
+                let sub_galley = ui.fonts(|f| f.layout_no_wrap(sub_num.clone(), font_id.clone(), Color32::from_rgb(209, 250, 229)));
                 let icon1_w = 11.0_f32;
                 let item_gap = 3.0_f32;
-                let total1_w = icon1_w + item_gap + sub_galley.size().x;
+
+                let delta_sub_str = crate::youtube::format_compact_delta(delta_sub);
+                let (delta1_galley, delta1_color) = if !delta_sub_str.is_empty() {
+                    let delta_font = egui::FontId::proportional(9.5);
+                    let color = if sub_increased {
+                        Color32::from_rgb(252, 165, 165)
+                    } else {
+                        Color32::from_rgb(253, 186, 116)
+                    };
+                    (Some(ui.fonts(|f| f.layout_no_wrap(delta_sub_str, delta_font, color))), color)
+                } else {
+                    (None, Color32::TRANSPARENT)
+                };
+
+                let circle1_w = if sub_increased { 8.0_f32 } else { 0.0_f32 };
+                let delta1_w = delta1_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+                let total1_w = icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
                 let start1_x = box1_rect.center().x - total1_w / 2.0;
 
                 let icon1_rect = Rect::from_center_size(
@@ -1328,6 +1471,33 @@ impl SocialCountApp {
                     sub_galley,
                     Color32::from_rgb(209, 250, 229),
                 );
+
+                let mut cur1_x = start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 3.0;
+                if sub_increased {
+                    let circle_pos = Pos2::new(cur1_x + 2.5, box1_rect.center().y);
+                    ui.painter().circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                    ui.painter().circle_stroke(circle_pos, 2.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                    cur1_x += 8.0;
+                }
+
+                if let Some(galley) = delta1_galley {
+                    ui.painter().galley(
+                        Pos2::new(cur1_x, box1_rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        delta1_color,
+                    );
+                }
+
+                let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
+                    if delta_sub != 0 {
+                        format!("Subscribers: {} | Since launch: {:+} (initial: {})", sub_num, delta_sub, init)
+                    } else {
+                        format!("Subscribers: {} (no change since launch)", sub_num)
+                    }
+                } else {
+                    format!("Subscribers: {}", sub_num)
+                };
+                box1_resp.on_hover_text(sub_tooltip);
 
                 // --- CENTER: CIRCULAR CHANNEL AVATAR ---
                 let (avatar_rect, avatar_resp) = ui.allocate_exact_size(
@@ -1379,20 +1549,42 @@ impl SocialCountApp {
                 });
 
                 // --- RIGHT CORNER: VIEWS COUNTER ---
-                let (box2_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+                let delta_views = channel.delta_views();
+                let views_increased = delta_views > 0;
+                let views_changed = delta_views != 0 || channel.views_changed;
+
+                let (box2_rect, box2_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                 ui.painter().rect_filled(box2_rect, Rounding::same(5.0), Color32::from_rgb(18, 36, 58));
-                let stroke2_color = if channel.views_changed {
-                    Color32::from_rgb(239, 68, 68) // Red border if number changed
+                let stroke2_color = if views_increased {
+                    Color32::from_rgb(239, 68, 68) // Red border when increased
+                } else if views_changed {
+                    Color32::from_rgb(249, 115, 22) // Orange border when decreased
                 } else {
                     Color32::from_rgb(96, 165, 250)
                 };
-                let stroke2_width = if channel.views_changed { 1.5_f32 } else { 1.0_f32 };
+                let stroke2_width = if views_changed { 1.5_f32 } else { 1.0_f32 };
                 ui.painter().rect_stroke(box2_rect, Rounding::same(5.0), Stroke::new(stroke2_width, stroke2_color));
 
                 let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num, font_id, Color32::from_rgb(224, 242, 254)));
+                let views_galley = ui.fonts(|f| f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254)));
                 let icon2_w = 13.0_f32;
-                let total2_w = icon2_w + item_gap + views_galley.size().x;
+
+                let delta_views_str = crate::youtube::format_compact_delta(delta_views);
+                let (delta2_galley, delta2_color) = if !delta_views_str.is_empty() {
+                    let delta_font = egui::FontId::proportional(9.5);
+                    let color = if views_increased {
+                        Color32::from_rgb(252, 165, 165)
+                    } else {
+                        Color32::from_rgb(253, 186, 116)
+                    };
+                    (Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))), color)
+                } else {
+                    (None, Color32::TRANSPARENT)
+                };
+
+                let circle2_w = if views_increased { 8.0_f32 } else { 0.0_f32 };
+                let delta2_w = delta2_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+                let total2_w = icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
                 let start2_x = box2_rect.center().x - total2_w / 2.0;
 
                 let icon2_rect = Rect::from_center_size(
@@ -1406,6 +1598,33 @@ impl SocialCountApp {
                     views_galley,
                     Color32::from_rgb(224, 242, 254),
                 );
+
+                let mut cur2_x = start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 3.0;
+                if views_increased {
+                    let circle_pos = Pos2::new(cur2_x + 2.5, box2_rect.center().y);
+                    ui.painter().circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                    ui.painter().circle_stroke(circle_pos, 2.5, Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)));
+                    cur2_x += 8.0;
+                }
+
+                if let Some(galley) = delta2_galley {
+                    ui.painter().galley(
+                        Pos2::new(cur2_x, box2_rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        delta2_color,
+                    );
+                }
+
+                let views_tooltip = if let Some(init) = channel.initial_views_count {
+                    if delta_views != 0 {
+                        format!("Views: {} | Since launch: {:+} (initial: {})", views_num, delta_views, init)
+                    } else {
+                        format!("Views: {} (no change since launch)", views_num)
+                    }
+                } else {
+                    format!("Views: {}", views_num)
+                };
+                box2_resp.on_hover_text(views_tooltip);
             });
         });
     }
