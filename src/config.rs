@@ -77,22 +77,22 @@ impl Config {
             .join(",\n");
 
         let content = format!(
-r#"# File di configurazione SocialCount
-# Elenco dei canali YouTube da monitorare
+r#"# SocialCount configuration file
+# List of YouTube channels to monitor (handles with or without @)
 channels = [
 {channels_formatted}
 ]
 
-# Intervallo di aggiornamento automatico in secondi (default: 300 = 5 minuti)
+# Automatic refresh interval in seconds (default: 300 = 5 minutes)
 refresh_interval_secs = {refresh}
 
-# Trasparenza dello sfondo (0 = completamente trasparente, 255 = opaco, default: 190)
+# Background opacity (0 = fully transparent, 255 = opaque, default: 190)
 card_opacity = {opacity}
 
-# Modalita compatta (true = widget compatto, false = vista completa)
+# Compact mode (true = compact widget, false = full view)
 compact_mode = {compact}
 
-# Dimensioni della finestra (larghezza e altezza in pixel logici)
+# Window dimensions (width and height in logical pixels)
 window_width = {width:.1}
 window_height = {height:.1}
 "#,
@@ -117,7 +117,7 @@ window_height = {height:.1}
         match fs::read_to_string(path) {
             Ok(content) => match toml::from_str::<Config>(&content) {
                 Ok(mut cfg) => {
-                    // Normalizza gli handle
+                    // Normalize handles
                     cfg.channels = cfg
                         .channels
                         .into_iter()
@@ -140,12 +140,12 @@ window_height = {height:.1}
                     cfg
                 }
                 Err(err) => {
-                    eprintln!("Errore parsing {}: {}. Uso valori default.", CONFIG_FILENAME, err);
+                    eprintln!("Error parsing {}: {}. Using default values.", CONFIG_FILENAME, err);
                     Config::default()
                 }
             },
             Err(err) => {
-                eprintln!("Errore lettura {}: {}. Uso valori default.", CONFIG_FILENAME, err);
+                eprintln!("Error reading {}: {}. Using default values.", CONFIG_FILENAME, err);
                 Config::default()
             }
         }

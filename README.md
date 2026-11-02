@@ -4,7 +4,7 @@
 
 # 📺 SocialCount
 
-**Un widget desktop moderno, leggero, trasparente e sempre in primo piano sviluppato in Rust per monitorare in tempo reale le statistiche dei canali YouTube.**
+**A modern, lightweight, transparent, always-on-top desktop widget developed in Rust to monitor YouTube channel statistics in real time.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
@@ -14,13 +14,13 @@
 
 ---
 
-## 📸 Screenshot
+## 📸 Screenshots
 
 <div align="center">
   <table>
     <tr>
-      <td align="center"><b>Modalità Normale (Glassmorphism)</b></td>
-      <td align="center"><b>Modalità Ultra-Compatta (Doppio Click)</b></td>
+      <td align="center"><b>Normal View (Glassmorphism)</b></td>
+      <td align="center"><b>Ultra-Compact View (Double-Click)</b></td>
     </tr>
     <tr>
       <td align="center"><img src="assets/screenshot-normal.png" alt="SocialCount Normal View" width="420" /></td>
@@ -31,58 +31,66 @@
 
 ---
 
-## ✨ Caratteristiche Principali
+## ✨ Key Features
 
-- **Senza sfondo (Transparent Window)**: La finestra è priva di bordi di sistema ed è trasparente, integrandosi elegantemente sul desktop.
-- **Sempre in primo piano (Always on Top)**: Rimane visibile sopra tutte le altre finestre durante il lavoro o il gaming.
-- **Interfaccia Glassmorphism ad Alto Impatto**:
-  - Contenitore principale a effetto vetro fumé (*frosted glass*) con bordo di riflesso e ombra soffusa (*ambient drop shadow*).
-  - Card dei canali fluttuanti con sfondo acrylic scuro.
-  - Indicatore live pulsante (*dot verde smeraldo animato in tempo reale*).
-  - Logo YouTube vettoriale integrato nella barra superiore.
-- **Icone Canale Rotonde**:
-  - Immagini profilo dei canali scaricate in background, ritagliate a cerchio perfetto con maschera anti-alias ed evidenziate da un anello di riflesso.
-- **Contatori Solidi con Icone Vettoriali Dedicate (Zero Emoji)**:
-  - **Pill Smeraldo (Utenti / Iscritti)**: Silhouette profilo vettoriale + solo valore numerico formattato.
-  - **Pill Zaffiro (Visualizzazioni)**: Icona occhio con iride e punto luce (*catchlight*) + solo valore numerico formattato.
-  - Nessuna parola superflua o etichetta descrittiva e nessun contatore di posizione (`#1`, `#2`).
-  - **I box contatori rimangono sempre al 100% solidi e opachi** a prescindere dal livello di trasparenza scelto, garantendo massima leggibilità.
-  - **Pari dimensione & reattività**: i due box si adattano proporzionalmente alla larghezza della finestra.
-- **Ordinamento per Utenti**: I canali vengono ordinati automaticamente in ordine decrescente di iscritti.
-- **Slider Trasparenza Continuo nel Titolo**:
-  - Regola in tempo reale la trasparenza dello sfondo da **0% (completamente trasparente)** fino al **100% opaco**. A trasparenza zero scompaiono completamente sfondi e bordi, lasciando visibili soltanto le icone rotonde e i pill dei contatori.
-- **Modalità Ultra-Compatta con Doppio Click**:
-  - Facendo **doppio click sulla barra del titolo**, la finestra si riduce istantaneamente alla versione ultra-compatta: svaniscono slider, footer e scritte, lasciando solo l'immagine del profilo rotonda al centro affiancata dai contatori su angolo sinistro e destro.
-  - Un altro doppio click ripristina la visualizzazione completa.
-- **Spostamento Fluido Multi-Schermo**:
-  - Spostamento privo di ancoraggi indesiderati (*Aero Snap*) o allargamenti durante il passaggio tra monitor a risoluzioni e DPI differenti.
-- **Footer Sticky con Data e Ora**:
-  - Mostra il battito live e il timestamp preciso dell'ultimo aggiornamento (es. `02/11/2026 10:45:12`).
-- **Configurazione Semplice via TOML (`channels.toml`)**:
-  - Legge i canali desiderati direttamente da un file di configurazione modificabile al volo senza ricompilare.
-- **Zero API Key richieste**:
-  - Estrae pubblicamente le informazioni aggiornate direttamente da YouTube in background tramite worker thread asincrono.
-- **Link Diretti**:
-  - Cliccando sul nome o sull'avatar del canale si apre la pagina YouTube corrispondente nel browser predefinito.
+- **Transparent & Borderless Window**: Clean system chrome-free window with native transparency that blends seamlessly onto your desktop.
+- **Always on Top**: Stays floating above all active applications during work or gaming sessions.
+- **High-Impact Glassmorphism UI**:
+  - Frosted glass container with ambient drop shadow and subtle reflection border.
+  - Floating channel cards with dark acrylic styling.
+  - Real-time animated pulsing emerald live indicator dot.
+  - Crisp vector YouTube badge logo integrated into the header.
+- **Circular Channel Avatars**:
+  - Channel profile pictures downloaded in the background, clipped to a perfect circle with anti-aliased edge masking and subtle highlight ring.
+- **Solid Stat Counter Pills (Zero Emojis)**:
+  - **Emerald Pill (Users / Subscribers)**: Vector user silhouette icon + clean formatted number.
+  - **Sapphire Pill (Views)**: Vector eye icon with pupil and catchlight highlight + clean formatted number.
+  - Equal width and responsive sizing matching window width.
+  - **100% solid & opaque counter pills** regardless of chosen background transparency, ensuring maximum contrast and legibility.
+- **Real-Time Change Detection**:
+  - Automatically highlights counter pills with a red border whenever a channel's subscriber or view count changes.
+- **Automatic Sorting by Subscribers**: Channels are dynamically ordered by subscriber count in descending order.
+- **Continuous Opacity Slider**:
+  - Adjust background opacity in real time from **0% (completely transparent)** to **100% opaque**. At 0% opacity, all cards and backgrounds vanish, leaving only the floating circular avatars and counter pills visible.
+- **Ultra-Compact Mode (Double-Click)**:
+  - **Double-click anywhere on the title bar** to instantly shrink into ultra-compact mode: header controls and footer fade away, showing only the centered avatar flanked by the two counter pills.
+  - Double-click again to restore normal view.
+- **Smooth Multi-Screen Dragging**:
+  - Custom coordinate-based dragging with direct position updates and `SWP_NOSIZE`, preventing Aero Snap dockings or unwanted resizing/ballooning when dragged across monitors with different DPIs or resolutions.
+- **Full CRUD Profile Manager (Right-Click or ⚙)**:
+  - **Right-click anywhere** or click the **⚙** header icon to open the channel manager.
+  - **Create**: Add new YouTube channels (auto-formatted with `@`).
+  - **Read**: View list with live avatars and handles.
+  - **Update**: Inline handle editing, reorder channels up/down.
+  - **Delete**: Remove channels from monitoring.
+  - Automatically persists changes to `channels.toml` and spawns immediate background fetch workers.
+- **Sticky Footer with Timestamp**:
+  - Real-time pulsing live dot with the exact timestamp of the last successful refresh (e.g. `02/11/2026 10:45:12`).
+- **Simple TOML Configuration (`channels.toml`)**:
+  - Reads channels and settings from a lightweight configuration file editable on the fly without recompilation.
+- **Zero API Keys Required**:
+  - Public data extraction directly from YouTube via background worker threads.
+- **Direct Web Links**:
+  - Click on any channel's name or avatar to open its YouTube page directly in your default browser.
 
 ---
 
-## 🚀 Come Eseguire
+## 🚀 Getting Started
 
-### Prerequisiti
-- **Rust** (con Cargo): assicurati di avere Rust installato (`rustc --version`).
+### Prerequisites
+- **Rust** (with Cargo): Ensure Rust 1.75+ is installed (`rustc --version`).
 
-### Compilazione ed Esecuzione
+### Build and Run
 ```bash
-# Clona il repository
+# Clone the repository
 git clone https://github.com/matteobaccan/SocialCount.git
 cd SocialCount
 
-# Esegui direttamente con cargo
+# Run directly via Cargo
 cargo run --release
 ```
 
-Oppure compila l'eseguibile autonomo:
+Or build the standalone release binary:
 ```bash
 cargo build --release
 .\target\release\socialcount.exe
@@ -90,58 +98,65 @@ cargo build --release
 
 ---
 
-## ⚙️ Configurazione (`channels.toml`)
+## ⚙️ Configuration (`channels.toml`)
 
-All'avvio, il programma legge il file [`channels.toml`](channels.toml). Se non esiste, viene generato automaticamente con i canali di esempio:
+On startup, SocialCount reads [`channels.toml`](channels.toml). If not present, a default configuration is generated:
 
 ```toml
-# File di configurazione SocialCount
-# Elenco dei canali YouTube da monitorare (handle con o senza @)
+# SocialCount configuration file
+# List of YouTube channels to monitor (handles with or without @)
 channels = [
     "@matteobaccan"
 ]
 
-# Intervallo di aggiornamento automatico in secondi (default: 300 = 5 minuti)
+# Automatic refresh interval in seconds (default: 300 = 5 minutes)
 refresh_interval_secs = 300
 
-# Trasparenza dello sfondo (0 = completamente trasparente, 255 = opaco, default: 190)
+# Background opacity (0 = fully transparent, 255 = opaque, default: 190)
 card_opacity = 190
+
+# Compact mode (true = compact widget, false = full view)
+compact_mode = false
+
+# Window dimensions (width and height in logical pixels)
+window_width = 360.0
+window_height = 440.0
 ```
 
 ---
 
-## 🛠️ Struttura del Progetto
+## 🛠️ Project Structure
 
 ```
 SocialCount/
-├── Cargo.toml          # Configurazione e dipendenze Rust (eframe, egui, reqwest, serde, toml, image)
-├── channels.toml       # Elenco canali YouTube monitorati
-├── LICENSE             # Licenza MIT
-├── README.md           # Documentazione del progetto
-├── assets/             # Logo, banner e screenshot
+├── Cargo.toml          # Rust package configuration and dependencies (eframe, egui, reqwest, serde, toml, image)
+├── channels.toml       # Monitored YouTube channels and widget settings
+├── LICENSE             # MIT License
+├── README.md           # Project documentation
+├── assets/             # Logo, social banner, and documentation screenshots
 │   ├── logo.png
 │   ├── socialcount-banner.png
 │   ├── screenshot-normal.png
 │   └── screenshot-compact.png
 ├── examples/
-│   └── generate_assets.rs # Generatore di risorse grafiche
+│   └── generate_assets.rs # Vector and raster graphic assets generator
 └── src/
-    ├── main.rs         # Entrypoint e configurazione viewport trasparente e borderless
-    ├── app.rs          # Interfaccia grafica egui, layout responsive e modalità compatta
-    ├── config.rs       # Gestione e persistenza della configurazione TOML
-    ├── icons.rs        # Rendering vettoriale puro (badge YouTube, user silhouette, eye, live dot)
-    └── youtube.rs      # Client HTTP asincrono e parser statistiche canale
+    ├── main.rs         # Application entry point and transparent borderless viewport configuration
+    ├── app.rs          # egui GUI implementation, responsive layout, CRUD profile manager, Win32 drag
+    ├── config.rs       # TOML configuration loading, normalization, and persistence
+    ├── icons.rs        # Pure vector rendering (YouTube badge, user silhouette, eye, live dot)
+    └── youtube.rs      # Background HTTP client, HTML parser, and subscriber counter extractor
 ```
 
 ---
 
-## 📄 Licenza
+## 📄 License
 
-Distribuito sotto licenza **MIT**. Consulta il file [`LICENSE`](LICENSE) per ulteriori informazioni.
+Distributed under the **MIT** License. See [`LICENSE`](LICENSE) for more information.
 
 ---
 
-## 👤 Autore
+## 👤 Author
 
 **Matteo Baccan**
 - GitHub: [@matteobaccan](https://github.com/matteobaccan)

@@ -29,7 +29,7 @@ impl ChannelData {
         Self {
             handle: handle.to_string(),
             title: handle.trim_start_matches('@').to_string(),
-            subscriber_text: "Caricamento...".to_string(),
+            subscriber_text: "Loading...".to_string(),
             subscriber_count: 0,
             views_text: "-".to_string(),
             video_count_text: "-".to_string(),
@@ -75,30 +75,30 @@ impl YouTubeFetcher {
         let response = match self
             .client
             .get(&url)
-            .header("Accept-Language", "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7")
+            .header("Accept-Language", "en-US,en;q=0.9,it-IT;q=0.8,it;q=0.7")
             .header("Cache-Control", "no-cache")
             .send()
         {
             Ok(resp) => resp,
             Err(e) => {
-                data.error = Some(format!("Errore connessione: {}", e));
-                data.subscriber_text = "N/D".to_string();
-                data.views_text = "N/D".to_string();
+                data.error = Some(format!("Connection error: {}", e));
+                data.subscriber_text = "N/A".to_string();
+                data.views_text = "N/A".to_string();
                 return data;
             }
         };
 
         if !response.status().is_success() {
-            data.error = Some(format!("Status HTTP: {}", response.status()));
-            data.subscriber_text = "N/D".to_string();
-            data.views_text = "N/D".to_string();
+            data.error = Some(format!("HTTP status: {}", response.status()));
+            data.subscriber_text = "N/A".to_string();
+            data.views_text = "N/A".to_string();
             return data;
         }
 
         let html = match response.text() {
             Ok(txt) => txt,
             Err(e) => {
-                data.error = Some(format!("Errore lettura risposta: {}", e));
+                data.error = Some(format!("Error reading response: {}", e));
                 return data;
             }
         };
@@ -118,9 +118,9 @@ impl YouTubeFetcher {
                 parsed
             }
             Err(e) => {
-                data.error = Some(format!("Errore estrazione dati: {}", e));
-                data.subscriber_text = "N/D".to_string();
-                data.views_text = "N/D".to_string();
+                data.error = Some(format!("Error extracting data: {}", e));
+                data.subscriber_text = "N/A".to_string();
+                data.views_text = "N/A".to_string();
                 data
             }
         }
@@ -130,17 +130,17 @@ impl YouTubeFetcher {
         let marker = "var ytInitialData = ";
         let start_idx = html
             .find(marker)
-            .ok_or_else(|| "ytInitialData non trovato nell'HTML".to_string())?
+            .ok_or_else(|| "ytInitialData not found in HTML".to_string())?
             + marker.len();
 
         let end_idx = html[start_idx..]
             .find(";</script>")
             .map(|i| start_idx + i)
-            .ok_or_else(|| "Chiusura script ytInitialData non trovata".to_string())?;
+            .ok_or_else(|| "ytInitialData closing script tag not found".to_string())?;
 
         let json_str = &html[start_idx..end_idx];
         let json: Value = serde_json::from_str(json_str)
-            .map_err(|e| format!("Errore decodifica JSON: {}", e))?;
+            .map_err(|e| format!("JSON decode error: {}", e))?;
 
         // Extract title
         let title = json
@@ -157,7 +157,7 @@ impl YouTubeFetcher {
             .unwrap_or(handle.trim_start_matches('@'))
             .to_string();
 
-        // Extract Avatar URL
+        // Extract avatar URL
         let mut avatar_url = String::new();
         if let Some(thumbs) = json.pointer("/metadata/channelMetadataRenderer/avatar/thumbnails").and_then(|v| v.as_array()) {
             if let Some(last) = thumbs.last().and_then(|t| t.get("url")).and_then(|u| u.as_str()) {
@@ -200,7 +200,7 @@ impl YouTubeFetcher {
                         for part in parts {
                             if let Some(txt) = part.pointer("/text/content").and_then(|v| v.as_str()) {
                                 let lower = txt.to_lowercase();
-                                if lower.contains("iscritt") || lower.contains("sub") {
+                                if lower.contains("sub") || lower.contains("iscritt") {
                                     subscriber_text = txt.to_string();
                                 } else if lower.contains("video") && video_count_text.is_empty() {
                                     video_count_text = txt.to_string();
@@ -213,10 +213,10 @@ impl YouTubeFetcher {
         }
 
         if subscriber_text.is_empty() {
-            subscriber_text = "0 iscritti".to_string();
+            subscriber_text = "0 subscribers".to_string();
         }
         if views_text.is_empty() {
-            views_text = "0 visualizzazioni".to_string();
+            views_text = "0 views".to_string();
         }
 
         let subscriber_count = parse_subscriber_count(&subscriber_text);
@@ -267,11 +267,11 @@ fn find_key_recursive<'a>(value: &'a Value, target_key: &str) -> Option<&'a Valu
 
 pub fn clean_stat_number(text: &str) -> String {
     let words_to_remove = [
-        "visualizzazioni", "visualizzazion*", "visualizzazion",
-        "iscritti", "iscritt*", "iscritt",
         "subscribers", "subscriber", "subs",
         "views", "view",
         "video", "videos",
+        "visualizzazioni", "visualizzazion*", "visualizzazion",
+        "iscritti", "iscritt*", "iscritt",
     ];
 
     let mut cleaned = text.to_string();
@@ -301,6 +301,7 @@ pub fn clean_stat_number(text: &str) -> String {
 
     trimmed
 }
+
 pub fn parse_subscriber_count(text: &str) -> u64 {
     let lower = text.to_lowercase();
 
@@ -355,21 +356,28 @@ mod tests {
     #[test]
     fn test_clean_stat_number() {
         assert_eq!(clean_stat_number("26 iscritti"), "26");
+        assert_eq!(clean_stat_number("26 subscribers"), "26");
         assert_eq!(clean_stat_number("2507 visualizzazioni"), "2.507");
+        assert_eq!(clean_stat_number("2507 views"), "2.507");
         assert_eq!(clean_stat_number("559 visualizzazioni"), "559");
+        assert_eq!(clean_stat_number("559 views"), "559");
         assert_eq!(clean_stat_number("1,3 mila iscritti"), "1,3 mila");
+        assert_eq!(clean_stat_number("1.3K subscribers"), "1.3K");
         assert_eq!(clean_stat_number("10.2M subscribers"), "10.2M");
     }
 
     #[test]
     fn test_parse_subscriber_counts() {
         assert_eq!(parse_subscriber_count("26 iscritti"), 26);
+        assert_eq!(parse_subscriber_count("26 subscribers"), 26);
         assert_eq!(parse_subscriber_count("18 iscritti"), 18);
         assert_eq!(parse_subscriber_count("1,3 mila iscritti"), 1300);
         assert_eq!(parse_subscriber_count("1.3K subscribers"), 1300);
         assert_eq!(parse_subscriber_count("2,5 mln iscritti"), 2500000);
+        assert_eq!(parse_subscriber_count("2.5M subscribers"), 2500000);
         assert_eq!(parse_subscriber_count("10M subscribers"), 10000000);
         assert_eq!(parse_subscriber_count("1.250.000 iscritti"), 1250000);
+        assert_eq!(parse_subscriber_count("1,250,000 subscribers"), 1250000);
     }
 
     #[test]

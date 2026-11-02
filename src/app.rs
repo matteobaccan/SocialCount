@@ -107,7 +107,7 @@ mod win32_drag {
 
     static OLD_WNDPROC: AtomicIsize = AtomicIsize::new(0);
 
-    unsafe extern "system" fn wndproc_senza_bordo(
+    unsafe extern "system" fn borderless_wndproc(
         hwnd: isize,
         msg: u32,
         wparam: usize,
@@ -124,27 +124,27 @@ mod win32_drag {
         }
     }
 
-    pub fn rimuovi_bordo_finestra(hwnd: isize) {
+    pub fn remove_window_borders(hwnd: isize) {
         if hwnd == 0 {
             return;
         }
         unsafe {
-            let nostra_proc = wndproc_senza_bordo as *const () as isize;
+            let our_proc = borderless_wndproc as *const () as isize;
             let prev = GetWindowLongPtrW(hwnd, GWLP_WNDPROC);
             let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-            let ha_bordo_style = (style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0
+            let has_border_style = (style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0
                 || (style & WS_POPUP) == 0;
 
-            if prev == nostra_proc && !ha_bordo_style {
+            if prev == our_proc && !has_border_style {
                 return;
             }
 
             let mut rect = Rect::default();
-            let ha_rect = GetWindowRect(hwnd, &mut rect) != 0;
+            let has_rect = GetWindowRect(hwnd, &mut rect) != 0;
 
-            if prev != 0 && prev != nostra_proc {
+            if prev != 0 && prev != our_proc {
                 OLD_WNDPROC.store(prev, Ordering::Relaxed);
-                SetWindowLongPtrW(hwnd, GWLP_WNDPROC, nostra_proc);
+                SetWindowLongPtrW(hwnd, GWLP_WNDPROC, our_proc);
             }
 
             let ncrp: u32 = DWMNCRP_DISABLED;
@@ -169,20 +169,20 @@ mod win32_drag {
                 std::mem::size_of::<u32>() as u32,
             );
 
-            let nuovo_style = (style
+            let new_style = (style
                 & !(WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME))
                 | WS_POPUP;
-            SetWindowLongW(hwnd, GWL_STYLE, nuovo_style as i32);
+            SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
 
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-            let nuovo_ex = ex_style
+            let new_ex = ex_style
                 & !(WS_EX_DLGMODALFRAME
                     | WS_EX_WINDOWEDGE
                     | WS_EX_CLIENTEDGE
                     | WS_EX_STATICEDGE);
-            SetWindowLongW(hwnd, GWL_EXSTYLE, nuovo_ex as i32);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex as i32);
 
-            if ha_rect {
+            if has_rect {
                 SetWindowPos(
                     hwnd,
                     0,
@@ -199,13 +199,13 @@ mod win32_drag {
 
 #[cfg(windows)]
 #[derive(Clone, Copy)]
-struct TrascinamentoWin32 {
+struct Win32DragState {
     hwnd: isize,
     offset_cx: i32,
     offset_cy: i32,
     start_x: i32,
     start_y: i32,
-    mosso: bool,
+    moved: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,11 +241,11 @@ pub struct SocialCountApp {
     editing_channel_input: String,
     profile_error_msg: Option<String>,
     #[cfg(windows)]
-    hwnd_principale: isize,
+    main_hwnd: isize,
     #[cfg(windows)]
-    bordo_rimosso: bool,
+    border_removed: bool,
     #[cfg(windows)]
-    trascinamento: Option<TrascinamentoWin32>,
+    win32_drag_state: Option<Win32DragState>,
 }
 
 impl SocialCountApp {
@@ -291,11 +291,11 @@ impl SocialCountApp {
             editing_channel_input: String::new(),
             profile_error_msg: None,
             #[cfg(windows)]
-            hwnd_principale: 0,
+            main_hwnd: 0,
             #[cfg(windows)]
-            bordo_rimosso: false,
+            border_removed: false,
             #[cfg(windows)]
-            trascinamento: None,
+            win32_drag_state: None,
         };
 
         app.trigger_refresh();
@@ -311,7 +311,7 @@ impl SocialCountApp {
             self.pre_compact_size = Some(current_size);
             self.config.window_width = current_size.x;
             self.config.window_height = current_size.y;
-            // Calcolo altezza ultra-compatta: ~36px per canale + spazio header compatto
+            // Calculate ultra-compact height: ~36px per channel + compact header space
             let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
             let compact_w = 205.0_f32;
             Vec2::new(compact_w, compact_h)
@@ -343,7 +343,7 @@ impl SocialCountApp {
 
         for ch in &mut self.channels {
             if ch.subscriber_count == 0 {
-                ch.subscriber_text = "Caricamento...".to_string();
+                ch.subscriber_text = "Loading...".to_string();
             }
         }
 
@@ -409,7 +409,7 @@ impl SocialCountApp {
                     if let Some(pos) = self.channels.iter().position(|c| c.handle == new_data.handle) {
                         let old = &self.channels[pos];
 
-                        // Rileva se il numero di iscritti è cambiato rispetto a un precedente valore valido
+                        // Detect if subscriber count changed compared to previously known valid value
                         if old.subscriber_count > 0 && new_data.subscriber_count > 0 && new_data.subscriber_count != old.subscriber_count {
                             new_data.sub_changed = true;
                             new_data.sub_changed_at = Some(Instant::now());
@@ -418,7 +418,7 @@ impl SocialCountApp {
                             new_data.sub_changed_at = old.sub_changed_at;
                         }
 
-                        // Rileva se le visualizzazioni sono cambiate rispetto a prima
+                        // Detect if view count changed compared to previous value
                         let old_views_clean = crate::youtube::clean_stat_number(&old.views_text);
                         let new_views_clean = crate::youtube::clean_stat_number(&new_data.views_text);
                         if !old_views_clean.is_empty() && old_views_clean != "-" && !new_views_clean.is_empty() && new_views_clean != "-" && old_views_clean != new_views_clean {
@@ -473,7 +473,7 @@ fn chrono_or_fallback_time() -> String {
     }
     #[cfg(not(windows))]
     {
-        "Adesso".to_string()
+        "Just now".to_string()
     }
 }
 
@@ -484,9 +484,9 @@ impl eframe::App for SocialCountApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(windows)]
-        self.aggiorna_hwnd_e_bordo_win32();
+        self.update_hwnd_and_border_win32();
         #[cfg(windows)]
-        self.aggiorna_trascinamento_win32(ctx);
+        self.update_win32_drag(ctx);
 
         self.update_textures(ctx);
 
@@ -501,7 +501,7 @@ impl eframe::App for SocialCountApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
 
-        // Rilevamento click destro per accedere alla gestione profili (CRUD)
+        // Secondary / Right-click detection to open profile manager (CRUD)
         if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
             self.show_profile_manager = !self.show_profile_manager;
             self.profile_error_msg = None;
@@ -517,7 +517,7 @@ impl eframe::App for SocialCountApp {
             }
         }
 
-        // Calcolo dimensione target e stabilizzazione anti-ballooning quando si sposta tra schermi (es. schermo a sinistra)
+        // Target size calculation and anti-ballooning stabilization across monitors
         let target_size = if self.show_profile_manager {
             if self.is_compact {
                 Vec2::new(350.0, 440.0)
@@ -545,7 +545,7 @@ impl eframe::App for SocialCountApp {
                 let full_rect = ui.max_rect();
                 let alpha_factor = self.card_opacity as f32 / 255.0;
 
-                // Contenitore principale a effetto vetro fumé
+                // Main frosted glass acrylic container
                 let container_bg = if self.card_opacity == 0 {
                     Color32::TRANSPARENT
                 } else {
@@ -590,14 +590,14 @@ impl eframe::App for SocialCountApp {
                         if self.show_profile_manager {
                             self.render_profile_manager(ui, ctx, alpha_factor);
                         } else {
-                            // 1. HEADER (differenziato tra vista normale e vista ultra-compatta)
+                            // 1. HEADER (distinct between normal and ultra-compact view)
                             if self.is_compact {
                                 self.render_header_compact(ui, ctx);
                             } else {
                                 self.render_header(ui, ctx);
                             }
 
-                            // Linea divisoria superiore (visibile solo se non compatta e opacità > 0)
+                            // Top divider line (visible only in normal view when opacity > 0)
                             let sep_alpha = (18.0 * alpha_factor).round() as u8;
                             if !self.is_compact {
                                 ui.add_space(8.0);
@@ -610,9 +610,9 @@ impl eframe::App for SocialCountApp {
                                 ui.add_space(2.0);
                             }
 
-                            // 2. LISTA DEI CANALI
+                            // 2. CHANNELS LIST
                             if self.is_compact {
-                                // In modalità compatta non serve scrollbar: layout ultra-compatto diretto
+                                // In compact mode scrollbar is unnecessary: direct compact card layout
                                 for channel in &self.channels {
                                     self.render_channel_card_compact(ui, channel);
                                     ui.add_space(2.0);
@@ -633,7 +633,7 @@ impl eframe::App for SocialCountApp {
 
                                 ui.add_space(4.0);
 
-                                // Linea divisoria inferiore sopra il Footer
+                                // Bottom divider line above footer
                                 let (sep2_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
                                 if sep_alpha > 0 {
                                     ui.painter().hline(sep2_rect.x_range(), sep2_rect.center().y, Stroke::new(1.0_f32, Color32::from_white_alpha(sep_alpha)));
@@ -641,20 +641,20 @@ impl eframe::App for SocialCountApp {
 
                                 ui.add_space(4.0);
 
-                                // 3. FOOTER STICKY (visibile in vista normale)
+                                // 3. STICKY FOOTER (visible in normal view)
                                 self.render_footer(ui);
                             }
                         }
                     });
 
-                // Gestori di ridimensionamento e grip
+                // Resize handles and grip
                 self.render_resize_handles(ui, ctx, full_rect);
             });
     }
 }
 
 impl SocialCountApp {
-    /// Header per la modalità normale: Logo, Titolo, Slider Trasparenza, Refresh, Close
+    /// Header for normal view: Logo, Title, Opacity Slider, Refresh, Settings, Close
     fn render_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let total_w = ui.available_width();
         let header_h = 26.0_f32;
@@ -675,15 +675,15 @@ impl SocialCountApp {
         }
         if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
             #[cfg(windows)]
-            self.avvia_trascinamento_win32();
+            self.start_win32_drag();
             #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
-        // Sotto-ui per i pulsanti interattivi a destra
+        // Sub-UI for interactive buttons on the right
         let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
 
-        // Disegna logo YouTube e Titolo a sinistra
+        // Draw YouTube logo and title on the left
         let logo_rect = Rect::from_center_size(
             Pos2::new(header_rect.min.x + 12.0, header_rect.center().y),
             Vec2::new(18.0, 13.0),
@@ -698,9 +698,10 @@ impl SocialCountApp {
             Color32::from_rgb(255, 255, 255),
         );
 
-        // Controlli sulla destra
+        // Controls on the right
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+                .on_hover_text("Close");
             let close_hover = close_resp.hovered();
             if close_hover {
                 ui.painter().circle_filled(close_resp.rect.center(), 11.0, Color32::from_rgba_unmultiplied(239, 68, 68, 45));
@@ -727,7 +728,8 @@ impl SocialCountApp {
 
             ui.add_space(2.0);
 
-            let settings_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let settings_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+                .on_hover_text("Manage profiles (or right-click)");
             let settings_hover = settings_resp.hovered();
             if settings_hover {
                 ui.painter().circle_filled(settings_resp.rect.center(), 11.0, Color32::from_white_alpha(25));
@@ -754,7 +756,9 @@ impl SocialCountApp {
 
             ui.add_space(2.0);
 
-            let refresh_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let refresh_tooltip = if self.is_loading { "Refreshing..." } else { "Refresh now" };
+            let refresh_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+                .on_hover_text(refresh_tooltip);
             let refresh_hover = refresh_resp.hovered();
             if refresh_hover {
                 ui.painter().circle_filled(refresh_resp.rect.center(), 11.0, Color32::from_white_alpha(25));
@@ -780,14 +784,14 @@ impl SocialCountApp {
 
             ui.add_space(4.0);
 
-            // Slider Trasparenza
+            // Background Opacity Slider
             let op_percent = ((self.card_opacity as f32 / 255.0) * 100.0).round() as u32;
             ui.horizontal(|ui| {
                 ui.spacing_mut().slider_width = 70.0_f32;
                 let slider = egui::Slider::new(&mut self.card_opacity, 0..=255)
                     .show_value(false);
                 let slider_resp = ui.add(slider)
-                    .on_hover_text(format!("Trasparenza sfondo: {}%", op_percent));
+                    .on_hover_text(format!("Background opacity: {}%", op_percent));
 
                 if slider_resp.drag_stopped() || (slider_resp.changed() && !slider_resp.dragged()) {
                     self.config.card_opacity = self.card_opacity;
@@ -803,7 +807,7 @@ impl SocialCountApp {
         });
     }
 
-    /// Header per la modalità ultra-compatta: piccolissimo drag handle e pulsante chiudi
+    /// Header for ultra-compact view: minimal drag handle and close button
     fn render_header_compact(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let total_w = ui.available_width();
         let header_h = 13.0_f32;
@@ -824,12 +828,12 @@ impl SocialCountApp {
         }
         if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
             #[cfg(windows)]
-            self.avvia_trascinamento_win32();
+            self.start_win32_drag();
             #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
-        // Pillola centrale minimale per il trascinamento
+        // Minimalist central drag pill
         let handle_color = if header_resp.hovered() || header_resp.dragged() {
             Color32::from_white_alpha(120)
         } else {
@@ -841,17 +845,18 @@ impl SocialCountApp {
         );
         ui.painter().rect_filled(handle_rect, Rounding::same(1.5), handle_color);
 
-        // Micro logo a sinistra
+        // Micro logo on the left
         let logo_rect = Rect::from_center_size(
             Pos2::new(header_rect.min.x + 8.0, header_rect.center().y),
             Vec2::new(12.0, 8.5),
         );
         crate::icons::draw_youtube_icon(ui.painter(), logo_rect);
 
-        // Minuscolo pulsante chiudi a destra
+        // Tiny close button on the right
         let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(13.0), egui::Sense::click());
+            let close_resp = ui.allocate_response(Vec2::splat(13.0), egui::Sense::click())
+                .on_hover_text("Close");
             let close_hover = close_resp.hovered();
             let close_color = if close_hover { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(140, 145, 160) };
             ui.painter().text(
@@ -870,7 +875,7 @@ impl SocialCountApp {
         });
     }
 
-    /// Footer sticky per la vista normale
+    /// Sticky footer for normal view
     fn render_footer(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.centered_and_justified(|ui| {
@@ -882,7 +887,7 @@ impl SocialCountApp {
                     ui.add_space(4.0);
 
                     ui.label(
-                        egui::RichText::new(format!("Aggiornato: {}", self.last_refresh_str))
+                        egui::RichText::new(format!("Updated: {}", self.last_refresh_str))
                             .size(11.0)
                             .color(Color32::from_rgb(148, 163, 184)),
                     );
@@ -917,7 +922,7 @@ impl SocialCountApp {
         let max_w = 1200.0_f32;
         let max_h = 1600.0_f32;
 
-        // Inizio trascinamento: catturiamo la dimensione iniziale e la posizione iniziale del cursore
+        // Start drag: capture initial window size and initial pointer position
         if se_resp.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(min_w, min_h)));
@@ -950,7 +955,7 @@ impl SocialCountApp {
             }
         }
 
-        // Gestione del ridimensionamento continuo deterministico
+        // Handle continuous deterministic resizing
         let pointer_down = ui.input(|i| i.pointer.primary_down());
         if !pointer_down {
             if let Some(_drag_state) = self.resize_drag.take() {
@@ -991,7 +996,7 @@ impl SocialCountApp {
             }
         }
 
-        // Cursori
+        // Cursors
         let is_se_active = se_resp.hovered()
             || matches!(self.resize_drag, Some(ResizeDragState { mode: ResizeMode::SouthEast, .. }));
         let is_east_active = east_resp.hovered()
@@ -1007,7 +1012,7 @@ impl SocialCountApp {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeVertical);
         }
 
-        // Disegno del grip a puntini in basso a destra
+        // Draw dotted corner grip in bottom right
         let painter = ui.painter();
         let alpha_factor = self.card_opacity as f32 / 255.0;
         let grip_alpha = (70.0 * alpha_factor).round() as u8;
@@ -1028,7 +1033,7 @@ impl SocialCountApp {
         }
     }
 
-    /// Vista normale: Card completa con Avatar, Nome, Handle e Contatori opachi
+    /// Normal view: full channel card with avatar, title, handle and solid stat pills
     fn render_channel_card(&self, ui: &mut egui::Ui, channel: &ChannelData) {
         let opacity = self.card_opacity;
         let alpha_factor = opacity as f32 / 255.0;
@@ -1132,7 +1137,7 @@ impl SocialCountApp {
 
                     ui.add_space(6.0);
 
-                    // Box contatori: Pari dimensione, reattivi alla larghezza della finestra, sempre opachi
+                    // Counter pills: Equal width, responsive to window width, always solid & opaque
                     let avail_w = ui.available_width();
                     let gap = 8.0_f32;
                     let box_w = ((avail_w - gap) / 2.0_f32).max(70.0_f32);
@@ -1142,11 +1147,11 @@ impl SocialCountApp {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = gap;
 
-                        // Box Utenti
+                        // Users/Subscribers Box
                         let (box1_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                         ui.painter().rect_filled(box1_rect, Rounding::same(8.0), Color32::from_rgb(16, 44, 28));
                         let stroke1_color = if channel.sub_changed {
-                            Color32::from_rgb(239, 68, 68) // Bordo rosso se il numero è cambiato
+                            Color32::from_rgb(239, 68, 68) // Red border if number changed
                         } else {
                             Color32::from_rgb(52, 211, 153)
                         };
@@ -1173,11 +1178,11 @@ impl SocialCountApp {
                             Color32::from_rgb(209, 250, 229),
                         );
 
-                        // Box Visualizzazioni
+                        // Views Box
                         let (box2_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                         ui.painter().rect_filled(box2_rect, Rounding::same(8.0), Color32::from_rgb(18, 36, 58));
                         let stroke2_color = if channel.views_changed {
-                            Color32::from_rgb(239, 68, 68) // Bordo rosso se il numero è cambiato
+                            Color32::from_rgb(239, 68, 68) // Red border if number changed
                         } else {
                             Color32::from_rgb(96, 165, 250)
                         };
@@ -1207,7 +1212,7 @@ impl SocialCountApp {
         });
     }
 
-    /// Vista ULTRA-COMPATTA: Sola immagine rotonda al centro con i due contatori opachi agli angoli
+    /// ULTRA-COMPACT view: Circular channel icon in center flanked by solid stat pills at the corners
     fn render_channel_card_compact(&self, ui: &mut egui::Ui, channel: &ChannelData) {
         let opacity = self.card_opacity;
         let alpha_factor = opacity as f32 / 255.0;
@@ -1228,20 +1233,20 @@ impl SocialCountApp {
 
         card_frame.show(ui, |ui| {
             let total_w = ui.available_width();
-            let avatar_size = 28.0_f32; // Avatar ultra compatto 28px
+            let avatar_size = 28.0_f32; // Ultra-compact avatar 28px
             let gap = 4.0_f32;
             let box_w = ((total_w - avatar_size - gap * 2.0) / 2.0_f32).max(48.0_f32);
-            let box_h = 21.0_f32; // Box compatto alto 21px
+            let box_h = 21.0_f32; // Compact box 21px high
             let box_size = Vec2::new(box_w, box_h);
 
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
 
-                // --- ANGOLO SINISTRO: CONTATORE UTENTI ---
+                // --- LEFT CORNER: USERS / SUBSCRIBERS COUNTER ---
                 let (box1_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                 ui.painter().rect_filled(box1_rect, Rounding::same(5.0), Color32::from_rgb(16, 44, 28));
                 let stroke1_color = if channel.sub_changed {
-                    Color32::from_rgb(239, 68, 68) // Bordo rosso se il numero è cambiato
+                    Color32::from_rgb(239, 68, 68) // Red border if number changed
                 } else {
                     Color32::from_rgb(52, 211, 153)
                 };
@@ -1268,7 +1273,7 @@ impl SocialCountApp {
                     Color32::from_rgb(209, 250, 229),
                 );
 
-                // --- CENTRO: SOLA IMMAGINE DEL CANALE (CERCHIO PERFETTO) ---
+                // --- CENTER: CIRCULAR CHANNEL AVATAR ---
                 let (avatar_rect, avatar_resp) = ui.allocate_exact_size(
                     Vec2::splat(avatar_size),
                     egui::Sense::click(),
@@ -1312,11 +1317,11 @@ impl SocialCountApp {
                     ui.label(egui::RichText::new(&channel.handle).color(Color32::from_rgb(148, 163, 184)));
                 });
 
-                // --- ANGOLO DESTRO: CONTATORE VISUALIZZAZIONI ---
+                // --- RIGHT CORNER: VIEWS COUNTER ---
                 let (box2_rect, _) = ui.allocate_exact_size(box_size, egui::Sense::hover());
                 ui.painter().rect_filled(box2_rect, Rounding::same(5.0), Color32::from_rgb(18, 36, 58));
                 let stroke2_color = if channel.views_changed {
-                    Color32::from_rgb(239, 68, 68) // Bordo rosso se il numero è cambiato
+                    Color32::from_rgb(239, 68, 68) // Red border if number changed
                 } else {
                     Color32::from_rgb(96, 165, 250)
                 };
@@ -1344,12 +1349,12 @@ impl SocialCountApp {
         });
     }
 
-    /// Schermata di gestione profili completa (CRUD) accessibile con tasto destro o icona ⚙
+    /// Complete Profile Manager (CRUD) modal accessible via right-click or ⚙ button
     fn render_profile_manager(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, alpha_factor: f32) {
         let total_w = ui.available_width();
         let header_h = 26.0_f32;
 
-        // 1. Header con drag handle e pulsante chiudi
+        // 1. Header with drag handle and close button
         let (header_rect, header_resp) = ui.allocate_exact_size(
             Vec2::new(total_w, header_h),
             egui::Sense::click_and_drag(),
@@ -1363,7 +1368,7 @@ impl SocialCountApp {
         }
         if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
             #[cfg(windows)]
-            self.avvia_trascinamento_win32();
+            self.start_win32_drag();
             #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
@@ -1371,14 +1376,15 @@ impl SocialCountApp {
         ui.painter().text(
             Pos2::new(header_rect.min.x + 4.0, header_rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "⚙ Gestione Canali YouTube",
+            "⚙ Manage YouTube Channels",
             egui::FontId::proportional(14.5),
             Color32::from_rgb(255, 255, 255),
         );
 
         let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(header_rect).layout(*ui.layout()));
         header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click());
+            let close_resp = ui.allocate_response(Vec2::splat(22.0), egui::Sense::click())
+                .on_hover_text("Close");
             let close_hover = close_resp.hovered();
             if close_hover {
                 ui.painter().circle_filled(close_resp.rect.center(), 11.0, Color32::from_rgba_unmultiplied(239, 68, 68, 45));
@@ -1401,7 +1407,7 @@ impl SocialCountApp {
             }
         });
 
-        // Linea divisoria
+        // Divider line
         ui.add_space(8.0);
         let sep_alpha = (25.0 * alpha_factor).round() as u8;
         let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
@@ -1410,20 +1416,20 @@ impl SocialCountApp {
         }
         ui.add_space(8.0);
 
-        // 2. FORM AGGIUNGI CANALE (CREATE)
+        // 2. ADD CHANNEL FORM (CREATE)
         ui.horizontal(|ui| {
             let input_width = (ui.available_width() - 88.0).max(120.0);
             let input_resp = ui.add_sized(
                 [input_width, 24.0],
                 egui::TextEdit::singleline(&mut self.new_channel_input)
-                    .hint_text("Es: @matteobaccan")
+                    .hint_text("e.g. @matteobaccan")
                     .margin(Margin::symmetric(6.0, 4.0)),
             );
 
             let enter_pressed = input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let add_btn = ui.add_sized(
                 [80.0, 24.0],
-                egui::Button::new(egui::RichText::new("+ Aggiungi").size(12.0).color(Color32::WHITE))
+                egui::Button::new(egui::RichText::new("+ Add").size(12.0).color(Color32::WHITE))
                     .fill(Color32::from_rgb(37, 99, 235))
                     .rounding(Rounding::same(5.0)),
             );
@@ -1438,7 +1444,7 @@ impl SocialCountApp {
                     };
 
                     if self.config.channels.iter().any(|h| h.eq_ignore_ascii_case(&formatted)) {
-                        self.profile_error_msg = Some("Il canale è già presente nella lista".to_string());
+                        self.profile_error_msg = Some("Channel is already in the list".to_string());
                     } else {
                         self.profile_error_msg = None;
                         self.config.channels.push(formatted.clone());
@@ -1446,7 +1452,7 @@ impl SocialCountApp {
                         let _ = self.config.save();
                         self.new_channel_input.clear();
 
-                        // Avvia il caricamento dei dati per il nuovo canale
+                        // Start background fetch for newly added channel
                         let tx = self.tx.clone();
                         let h = formatted.clone();
                         std::thread::spawn(move || {
@@ -1466,7 +1472,7 @@ impl SocialCountApp {
 
         ui.add_space(6.0);
 
-        // 3. LISTA DEI CANALI (READ, UPDATE, DELETE)
+        // 3. CHANNELS LIST (READ, UPDATE, DELETE)
         let list_h = (ui.available_height() - 36.0).max(100.0);
         let mut to_delete_idx = None;
         let mut to_move_up_idx = None;
@@ -1481,12 +1487,12 @@ impl SocialCountApp {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            egui::RichText::new("Nessun canale configurato")
+                            egui::RichText::new("No channels configured")
                                 .size(13.0)
                                 .color(Color32::from_rgb(148, 163, 184)),
                         );
                         ui.label(
-                            egui::RichText::new("Aggiungi il tuo primo canale sopra!")
+                            egui::RichText::new("Add your first channel above!")
                                 .size(11.0)
                                 .color(Color32::from_rgb(100, 116, 139)),
                         );
@@ -1506,23 +1512,23 @@ impl SocialCountApp {
                             .inner_margin(Margin::symmetric(8.0, 6.0))
                             .show(ui, |ui| {
                                 if self.editing_channel_idx == Some(idx) {
-                                    // Modalità modifica inline (UPDATE)
+                                    // Inline update mode (UPDATE)
                                     ui.horizontal(|ui| {
                                         ui.add_sized(
                                             [(ui.available_width() - 70.0).max(100.0), 22.0],
                                             egui::TextEdit::singleline(&mut self.editing_channel_input),
                                         );
 
-                                        if ui.small_button("✓").on_hover_text("Salva").clicked() {
+                                        if ui.small_button("✓").on_hover_text("Save").clicked() {
                                             to_save_edit = Some((idx, self.editing_channel_input.trim().to_string()));
                                         }
-                                        if ui.small_button("✕").on_hover_text("Annulla").clicked() {
+                                        if ui.small_button("✕").on_hover_text("Cancel").clicked() {
                                             self.editing_channel_idx = None;
                                         }
                                     });
                                 } else {
                                     ui.horizontal(|ui| {
-                                        // Mini avatar o icona
+                                        // Mini avatar or icon
                                         let (avatar_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
                                         let mut drawn = false;
                                         if let Some(c) = ch_data {
@@ -1542,7 +1548,7 @@ impl SocialCountApp {
 
                                         ui.add_space(4.0);
 
-                                        // Nome e handle
+                                        // Title and handle
                                         let title = ch_data.map(|c| c.title.as_str()).unwrap_or(handle.as_str());
                                         ui.vertical(|ui| {
                                             ui.label(
@@ -1558,39 +1564,39 @@ impl SocialCountApp {
                                             );
                                         });
 
-                                        // Controlli CRUD a destra: Sposta su, Sposta giù, Modifica, Elimina
+                                        // CRUD controls on the right: Move up, Move down, Edit, Delete
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // Elimina (D)
+                                            // Delete (D)
                                             let del_btn = ui.add(
                                                 egui::Button::new(egui::RichText::new("🗑").size(11.0).color(Color32::from_rgb(248, 113, 113)))
                                                     .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 25))
                                                     .rounding(Rounding::same(4.0)),
-                                            ).on_hover_text("Elimina canale");
+                                            ).on_hover_text("Delete channel");
                                             if del_btn.clicked() {
                                                 to_delete_idx = Some(idx);
                                             }
 
-                                            // Modifica (U)
+                                            // Edit (U)
                                             let edit_btn = ui.add(
                                                 egui::Button::new(egui::RichText::new("✏").size(11.0).color(Color32::from_rgb(147, 197, 253)))
                                                     .fill(Color32::from_white_alpha(15))
                                                     .rounding(Rounding::same(4.0)),
-                                            ).on_hover_text("Modifica handle");
+                                            ).on_hover_text("Edit handle");
                                             if edit_btn.clicked() {
                                                 self.editing_channel_idx = Some(idx);
                                                 self.editing_channel_input = handle.clone();
                                             }
 
-                                            // Sposta giù (U - Reorder)
+                                            // Move down (U - Reorder)
                                             if idx + 1 < self.config.channels.len()
-                                                && ui.small_button("▼").on_hover_text("Sposta giù").clicked()
+                                                && ui.small_button("▼").on_hover_text("Move down").clicked()
                                             {
                                                 to_move_down_idx = Some(idx);
                                             }
 
-                                            // Sposta su (U - Reorder)
+                                            // Move up (U - Reorder)
                                             if idx > 0
-                                                && ui.small_button("▲").on_hover_text("Sposta su").clicked()
+                                                && ui.small_button("▲").on_hover_text("Move up").clicked()
                                             {
                                                 to_move_up_idx = Some(idx);
                                             }
@@ -1603,7 +1609,7 @@ impl SocialCountApp {
                 }
             });
 
-        // Applica le modifiche pianificate
+        // Apply requested updates
         if let Some((idx, new_handle)) = to_save_edit {
             if !new_handle.is_empty() {
                 let formatted = if !new_handle.starts_with('@') && !new_handle.starts_with("UC") {
@@ -1615,7 +1621,7 @@ impl SocialCountApp {
                 let _ = self.config.save();
                 self.editing_channel_idx = None;
 
-                // Aggiorna o ricarica
+                // Update or reload
                 if let Some(pos) = self.channels.iter().position(|c| c.handle == formatted) {
                     self.channels[pos] = ChannelData::new_loading(&formatted);
                 } else {
@@ -1652,7 +1658,7 @@ impl SocialCountApp {
         // 4. FOOTER
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(format!("Totale canali: {}", self.config.channels.len()))
+                egui::RichText::new(format!("Total channels: {}", self.config.channels.len()))
                     .size(11.0)
                     .color(Color32::from_rgb(148, 163, 184)),
             );
@@ -1660,7 +1666,7 @@ impl SocialCountApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let done_btn = ui.add_sized(
                     [80.0, 22.0],
-                    egui::Button::new(egui::RichText::new("✓ Fine").size(12.0).color(Color32::WHITE))
+                    egui::Button::new(egui::RichText::new("✓ Done").size(12.0).color(Color32::WHITE))
                         .fill(Color32::from_rgb(59, 130, 246))
                         .rounding(Rounding::same(5.0)),
                 );
@@ -1677,33 +1683,33 @@ impl SocialCountApp {
     }
 
     #[cfg(windows)]
-    fn aggiorna_hwnd_e_bordo_win32(&mut self) {
-        if self.hwnd_principale == 0 {
-            let hwnd_attivo = unsafe { win32_drag::GetActiveWindow() };
-            if hwnd_attivo != 0 {
-                self.hwnd_principale = hwnd_attivo;
+    fn update_hwnd_and_border_win32(&mut self) {
+        if self.main_hwnd == 0 {
+            let active_hwnd = unsafe { win32_drag::GetActiveWindow() };
+            if active_hwnd != 0 {
+                self.main_hwnd = active_hwnd;
             } else {
                 let mut wide: Vec<u16> = "SocialCount - YouTube Channels".encode_utf16().collect();
                 wide.push(0);
                 let found = unsafe { win32_drag::FindWindowW(std::ptr::null(), wide.as_ptr()) };
                 if found != 0 {
-                    self.hwnd_principale = found;
+                    self.main_hwnd = found;
                 }
             }
         }
-        if self.hwnd_principale != 0 && !self.bordo_rimosso {
-            win32_drag::rimuovi_bordo_finestra(self.hwnd_principale);
-            self.bordo_rimosso = true;
+        if self.main_hwnd != 0 && !self.border_removed {
+            win32_drag::remove_window_borders(self.main_hwnd);
+            self.border_removed = true;
         }
     }
 
     #[cfg(windows)]
-    fn avvia_trascinamento_win32(&mut self) {
-        if self.hwnd_principale == 0 {
-            self.aggiorna_hwnd_e_bordo_win32();
+    fn start_win32_drag(&mut self) {
+        if self.main_hwnd == 0 {
+            self.update_hwnd_and_border_win32();
         }
-        if self.hwnd_principale != 0 && self.trascinamento.is_none() {
-            let hwnd = self.hwnd_principale;
+        if self.main_hwnd != 0 && self.win32_drag_state.is_none() {
+            let hwnd = self.main_hwnd;
             let mut cur = win32_drag::Point::default();
             let mut rect = win32_drag::Rect::default();
             unsafe {
@@ -1712,13 +1718,13 @@ impl SocialCountApp {
                 {
                     let cx = (rect.left + rect.right) / 2;
                     let cy = (rect.top + rect.bottom) / 2;
-                    self.trascinamento = Some(TrascinamentoWin32 {
+                    self.win32_drag_state = Some(Win32DragState {
                         hwnd,
                         offset_cx: cur.x - cx,
                         offset_cy: cur.y - cy,
                         start_x: cur.x,
                         start_y: cur.y,
-                        mosso: false,
+                        moved: false,
                     });
                 }
             }
@@ -1726,13 +1732,13 @@ impl SocialCountApp {
     }
 
     #[cfg(windows)]
-    fn aggiorna_trascinamento_win32(&mut self, ctx: &egui::Context) {
-        if let Some(mut tr) = self.trascinamento {
-            let giu = unsafe {
+    fn update_win32_drag(&mut self, ctx: &egui::Context) {
+        if let Some(mut tr) = self.win32_drag_state {
+            let down = unsafe {
                 (win32_drag::GetAsyncKeyState(win32_drag::VK_LBUTTON) as u16 & 0x8000) != 0
             };
-            if !giu {
-                self.trascinamento = None;
+            if !down {
+                self.win32_drag_state = None;
             } else {
                 let mut cur = win32_drag::Point::default();
                 let mut rect = win32_drag::Rect::default();
@@ -1741,15 +1747,15 @@ impl SocialCountApp {
                         && win32_drag::GetWindowRect(tr.hwnd, &mut rect) != 0
                     {
                         if (cur.x - tr.start_x).abs() > 2 || (cur.y - tr.start_y).abs() > 2 {
-                            tr.mosso = true;
+                            tr.moved = true;
                         }
-                        if tr.mosso {
+                        if tr.moved {
                             let w = rect.right - rect.left;
                             let h = rect.bottom - rect.top;
-                            let nuovo_cx = cur.x - tr.offset_cx;
-                            let nuovo_cy = cur.y - tr.offset_cy;
-                            let x = nuovo_cx - w / 2;
-                            let y = nuovo_cy - h / 2;
+                            let new_cx = cur.x - tr.offset_cx;
+                            let new_cy = cur.y - tr.offset_cy;
+                            let x = new_cx - w / 2;
+                            let y = new_cy - h / 2;
                             win32_drag::SetWindowPos(
                                 tr.hwnd,
                                 0,
@@ -1764,7 +1770,7 @@ impl SocialCountApp {
                         }
                     }
                 }
-                self.trascinamento = Some(tr);
+                self.win32_drag_state = Some(tr);
                 ctx.request_repaint();
             }
         }

@@ -38,7 +38,7 @@ fn draw_rounded_rect(
                 continue;
             }
 
-            // Distanza dal bordo arrotondato
+            // Distance from rounded corner
             let dx = if px < x + radius as i32 {
                 (x + radius as i32) - px
             } else if px >= x + w - radius as i32 {
@@ -99,9 +99,8 @@ fn draw_circle(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, color: Rgba<u
 
 fn draw_circle_stroke(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, stroke_w: f32, color: Rgba<u8>) {
     let (iw, ih) = img.dimensions();
-    let outer = radius + stroke_w / 2.0;
-    let inner = radius - stroke_w / 2.0;
-
+    let outer = radius + stroke_w * 0.5;
+    let inner = radius - stroke_w * 0.5;
     let min_x = (cx - outer - 1.0).max(0.0) as u32;
     let max_x = (cx + outer + 1.0).min(iw as f32 - 1.0) as u32;
     let min_y = (cy - outer - 1.0).max(0.0) as u32;
@@ -113,14 +112,14 @@ fn draw_circle_stroke(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, stroke
             let dy = y as f32 + 0.5 - cy;
             let dist = (dx * dx + dy * dy).sqrt();
 
-            if dist >= inner - 0.5 && dist <= outer + 0.5 {
-                let factor = if dist < inner + 0.5 {
-                    (dist - (inner - 0.5)).clamp(0.0, 1.0)
-                } else if dist > outer - 0.5 {
-                    ((outer + 0.5) - dist).clamp(0.0, 1.0)
-                } else {
-                    1.0
-                };
+            let d_outer = outer - dist;
+            let d_inner = dist - inner;
+            let d = d_outer.min(d_inner);
+
+            if d >= 0.5 {
+                blend_pixel(img.get_pixel_mut(x, y), color);
+            } else if d > -0.5 {
+                let factor = (d + 0.5).clamp(0.0, 1.0);
                 let mut aa = color;
                 aa[3] = ((color[3] as f32) * factor).round() as u8;
                 blend_pixel(img.get_pixel_mut(x, y), aa);
@@ -129,25 +128,24 @@ fn draw_circle_stroke(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, stroke
     }
 }
 
-fn draw_triangle(img: &mut RgbaImage, p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), color: Rgba<u8>) {
+fn draw_triangle(img: &mut RgbaImage, p0: (f32, f32), p1: (f32, f32), p2: (f32, f32), color: Rgba<u8>) {
     let (iw, ih) = img.dimensions();
-    let min_x = p1.0.min(p2.0).min(p3.0).max(0.0) as u32;
-    let max_x = p1.0.max(p2.0).max(p3.0).min(iw as f32 - 1.0) as u32;
-    let min_y = p1.1.min(p2.1).min(p3.1).max(0.0) as u32;
-    let max_y = p1.1.max(p2.1).max(p3.1).min(ih as f32 - 1.0) as u32;
+    let min_x = p0.0.min(p1.0).min(p2.0).max(0.0) as u32;
+    let max_x = (p0.0.max(p1.0).max(p2.0) + 1.0).min(iw as f32 - 1.0) as u32;
+    let min_y = p0.1.min(p1.1).min(p2.1).max(0.0) as u32;
+    let max_y = (p0.1.max(p1.1).max(p2.1) + 1.0).min(ih as f32 - 1.0) as u32;
+
+    fn edge(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
+        (c.0 - a.0) * (b.1 - a.1) - (c.1 - a.1) * (b.0 - a.0)
+    }
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {
-            let px = x as f32 + 0.5;
-            let py = y as f32 + 0.5;
-
-            let w1 = ((p2.1 - p3.1) * (px - p3.0) + (p3.0 - p2.0) * (py - p3.1))
-                / ((p2.1 - p3.1) * (p1.0 - p3.0) + (p3.0 - p2.0) * (p1.1 - p3.1));
-            let w2 = ((p3.1 - p1.1) * (px - p3.0) + (p1.0 - p3.0) * (py - p3.1))
-                / ((p2.1 - p3.1) * (p1.0 - p3.0) + (p3.0 - p2.0) * (p1.1 - p3.1));
-            let w3 = 1.0 - w1 - w2;
-
-            if w1 >= 0.0 && w2 >= 0.0 && w3 >= 0.0 {
+            let p = (x as f32 + 0.5, y as f32 + 0.5);
+            let w0 = edge(p1, p2, p);
+            let w1 = edge(p2, p0, p);
+            let w2 = edge(p0, p1, p);
+            if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0) {
                 blend_pixel(img.get_pixel_mut(x, y), color);
             }
         }
@@ -155,47 +153,64 @@ fn draw_triangle(img: &mut RgbaImage, p1: (f32, f32), p2: (f32, f32), p3: (f32, 
 }
 
 fn draw_youtube_badge(img: &mut RgbaImage, cx: f32, cy: f32, w: f32, h: f32) {
-    let rx = (cx - w / 2.0).round() as i32;
-    let ry = (cy - h / 2.0).round() as i32;
-    draw_rounded_rect(img, rx, ry, w as i32, h as i32, h * 0.28, Rgba([255, 33, 33, 255]));
+    let x = (cx - w / 2.0).round() as i32;
+    let y = (cy - h / 2.0).round() as i32;
+    let wi = w.round() as i32;
+    let hi = h.round() as i32;
 
-    let tw = w * 0.32;
-    let th = h * 0.40;
-    let p1 = (cx - tw * 0.4, cy - th * 0.5);
-    let p2 = (cx + tw * 0.6, cy);
-    let p3 = (cx - tw * 0.4, cy + th * 0.5);
-    draw_triangle(img, p1, p2, p3, Rgba([255, 255, 255, 255]));
+    // Red badge
+    draw_rounded_rect(img, x, y, wi, hi, h * 0.28, Rgba([255, 35, 35, 255]));
+
+    // Reflection border
+    draw_rounded_rect(img, x, y, wi, hi, h * 0.28, Rgba([255, 255, 255, 45]));
+    draw_rounded_rect(img, x + 1, y + 1, wi - 2, hi - 2, h * 0.28 - 1.0, Rgba([255, 35, 35, 255]));
+
+    // Centered white play triangle
+    let tri_w = w * 0.24;
+    let tri_h = h * 0.32;
+    let p0 = (cx - tri_w * 0.45, cy - tri_h);
+    let p1 = (cx - tri_w * 0.45, cy + tri_h);
+    let p2 = (cx + tri_w * 0.65, cy);
+    draw_triangle(img, p0, p1, p2, Rgba([255, 255, 255, 255]));
 }
 
 fn draw_user_icon(img: &mut RgbaImage, cx: f32, cy: f32, size: f32, color: Rgba<u8>) {
-    let head_r = size * 0.28;
     let head_cy = cy - size * 0.20;
+    let head_r = size * 0.26;
     draw_circle(img, cx, head_cy, head_r, color);
 
-    let body_r = size * 0.45;
-    let body_cy = cy + size * 0.50;
-    draw_circle(img, cx, body_cy, body_r, color);
+    let stroke_color = Rgba([color[0], color[1], color[2], 255]);
+    draw_circle_stroke(img, cx, head_cy, head_r, 2.0, stroke_color);
+
+    // Body arc
+    let body_cy = cy + size * 0.42;
+    let body_r = size * 0.38;
+    draw_circle_stroke(img, cx, body_cy, body_r, 2.0, stroke_color);
 }
 
 fn draw_eye_icon(img: &mut RgbaImage, cx: f32, cy: f32, size: f32, color: Rgba<u8>) {
-    let _w = size * 1.1;
-    let h = size * 0.75;
-    draw_circle_stroke(img, cx, cy, h * 0.5, 2.0, color);
-    draw_circle(img, cx, cy, h * 0.30, color);
-    draw_circle(img, cx + h * 0.12, cy - h * 0.12, h * 0.10, Rgba([255, 255, 255, 240]));
+    let r = size * 0.36;
+    draw_circle(img, cx, cy, r, color);
+
+    let stroke_color = Rgba([color[0], color[1], color[2], 255]);
+    draw_circle_stroke(img, cx, cy, r, 2.0, stroke_color);
+
+    // Pupil
+    draw_circle(img, cx, cy, r * 0.45, Rgba([15, 23, 42, 255]));
+    // Catchlight highlight
+    draw_circle(img, cx - r * 0.2, cy - r * 0.2, 1.8, Rgba([255, 255, 255, 255]));
 }
 
-/// Genera il logo moderno ad alta risoluzione (512x512)
+/// Generates square logo for repo and app icon
 fn generate_logo(path: &Path) {
-    let mut img: RgbaImage = ImageBuffer::new(512, 512);
+    let size = 512;
+    let mut img: RgbaImage = ImageBuffer::new(size, size);
+    let cx = size as f32 / 2.0;
+    let cy = size as f32 / 2.0;
 
-    // Sfondo dark glass arrotondato con bagliore
-    let cx = 256.0_f32;
-    let cy = 256.0_f32;
-
-    // Bagliore radiale
-    for y in 0..512 {
-        for x in 0..512 {
+    // Glowing radial ambient background
+    for y in 0..size {
+        for x in 0..size {
             let dx = x as f32 - cx;
             let dy = y as f32 - cy;
             let dist = (dx * dx + dy * dy).sqrt();
@@ -210,30 +225,30 @@ fn generate_logo(path: &Path) {
         }
     }
 
-    // Shield arrotondato effetto vetro
+    // Rounded frosted glass shield
     draw_rounded_rect(&mut img, 48, 48, 416, 416, 88.0, Rgba([18, 20, 28, 245]));
     draw_rounded_rect(&mut img, 50, 50, 412, 412, 86.0, Rgba([255, 255, 255, 28]));
     draw_rounded_rect(&mut img, 52, 52, 408, 408, 84.0, Rgba([15, 17, 24, 250]));
 
-    // Icona YouTube badge centrale grande
+    // Centered YouTube badge icon
     draw_youtube_badge(&mut img, cx, 195.0, 190.0, 130.0);
 
-    // Box indicatori stilizzati sotto
-    // Box verde (utenti)
+    // Stylized indicator boxes below
+    // Emerald box (subscribers)
     draw_rounded_rect(&mut img, 80, 295, 160, 68, 16.0, Rgba([16, 44, 28, 255]));
     draw_rounded_rect(&mut img, 82, 297, 156, 64, 14.0, Rgba([52, 211, 153, 255]));
     draw_rounded_rect(&mut img, 84, 299, 152, 60, 12.0, Rgba([16, 44, 28, 255]));
     draw_user_icon(&mut img, 120.0, 329.0, 28.0, Rgba([52, 211, 153, 255]));
     draw_rounded_rect(&mut img, 145, 323, 75, 12, 6.0, Rgba([209, 250, 229, 255]));
 
-    // Box blu (viste)
+    // Sapphire box (views)
     draw_rounded_rect(&mut img, 272, 295, 160, 68, 16.0, Rgba([18, 36, 58, 255]));
     draw_rounded_rect(&mut img, 274, 297, 156, 64, 14.0, Rgba([96, 165, 250, 255]));
     draw_rounded_rect(&mut img, 276, 299, 152, 60, 12.0, Rgba([18, 36, 58, 255]));
     draw_eye_icon(&mut img, 312.0, 329.0, 28.0, Rgba([96, 165, 250, 255]));
     draw_rounded_rect(&mut img, 337, 323, 75, 12, 6.0, Rgba([224, 242, 254, 255]));
 
-    // Barra Live Dot in basso
+    // Live Dot bar at the bottom
     draw_circle(&mut img, cx - 70.0, 395.0, 6.0, Rgba([34, 197, 94, 255]));
     draw_circle_stroke(&mut img, cx - 70.0, 395.0, 10.0, 2.0, Rgba([34, 197, 94, 90]));
     draw_rounded_rect(&mut img, (cx - 45.0) as i32, 390, 120, 10, 5.0, Rgba([148, 163, 184, 200]));
@@ -242,13 +257,13 @@ fn generate_logo(path: &Path) {
     println!("Saved: {}", path.display());
 }
 
-/// Genera screenshot della modalità normale
+/// Generates screenshot for normal mode
 fn generate_normal_screenshot(path: &Path) {
     let w = 480;
     let h = 580;
     let mut img: RgbaImage = ImageBuffer::new(w, h);
 
-    // Sfondo desktop gradiente elegante (dark wallpaper style)
+    // Desktop gradient background (dark wallpaper style)
     for y in 0..h {
         let f = y as f32 / h as f32;
         let r = (14.0 + f * 12.0) as u8;
@@ -259,21 +274,21 @@ fn generate_normal_screenshot(path: &Path) {
         }
     }
 
-    // Shadow e widget SocialCount
+    // Shadow and SocialCount widget
     let wx = 60;
     let wy = 50;
     let ww = 360;
     let wh = 460;
 
-    // Ombra finestra
+    // Window shadow
     draw_rounded_rect(&mut img, wx - 6, wy + 4, ww + 12, wh + 12, 24.0, Rgba([0, 0, 0, 120]));
 
-    // Finestra frosted glass SocialCount
+    // Frosted glass SocialCount window
     draw_rounded_rect(&mut img, wx, wy, ww, wh, 18.0, Rgba([18, 20, 28, 235]));
     draw_rounded_rect(&mut img, wx, wy, ww, wh, 18.0, Rgba([255, 255, 255, 30]));
     draw_rounded_rect(&mut img, wx + 1, wy + 1, ww - 2, wh - 2, 17.0, Rgba([18, 20, 28, 240]));
 
-    // Header: YouTube icon + Titolo "SocialCount" + slider + refresh + close
+    // Header: YouTube icon + Title + slider + refresh + close
     draw_youtube_badge(&mut img, (wx + 26) as f32, (wy + 24) as f32, 20.0, 14.0);
     draw_rounded_rect(&mut img, wx + 42, wy + 18, 90, 12, 4.0, Rgba([255, 255, 255, 230])); // "SocialCount"
 
@@ -285,83 +300,54 @@ fn generate_normal_screenshot(path: &Path) {
     draw_circle_stroke(&mut img, (wx + 295) as f32, (wy + 24) as f32, 6.0, 2.0, Rgba([147, 197, 253, 240]));
     draw_circle(&mut img, (wx + 328) as f32, (wy + 24) as f32, 8.0, Rgba([239, 68, 68, 80]));
 
-    // Linea divisoria
+    // Divider line
     draw_rounded_rect(&mut img, wx + 14, wy + 46, ww - 28, 1, 0.0, Rgba([255, 255, 255, 22]));
 
-    // Canale 1: @matteobaccan
+    // Channel 1: @matteobaccan
     let c1_y = wy + 60;
     draw_rounded_rect(&mut img, wx + 14, c1_y, ww - 28, 92, 14.0, Rgba([26, 29, 39, 235]));
     draw_rounded_rect(&mut img, wx + 14, c1_y, ww - 28, 92, 14.0, Rgba([255, 255, 255, 25]));
 
-    // Avatar rotondo con riflesso
+    // Circular avatar with reflection
     draw_circle(&mut img, (wx + 44) as f32, (c1_y + 46) as f32, 24.0, Rgba([40, 70, 110, 255]));
     draw_circle_stroke(&mut img, (wx + 44) as f32, (c1_y + 46) as f32, 24.0, 2.0, Rgba([255, 255, 255, 70]));
 
-    // Nome canale & handle
-    draw_rounded_rect(&mut img, wx + 80, c1_y + 16, 120, 12, 4.0, Rgba([255, 255, 255, 240]));
-    draw_rounded_rect(&mut img, wx + 80, c1_y + 34, 80, 9, 3.0, Rgba([148, 163, 184, 210]));
+    // Channel name & handle
+    draw_rounded_rect(&mut img, wx + 80, c1_y + 16, 120, 14, 4.0, Rgba([255, 255, 255, 240]));
+    draw_rounded_rect(&mut img, wx + 210, c1_y + 18, 90, 10, 3.0, Rgba([148, 163, 184, 180]));
 
-    // Box Utenti (sinistra) e Viste (destra) - 100% solidi
-    draw_rounded_rect(&mut img, wx + 80, c1_y + 52, 112, 28, 8.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 80, c1_y + 52, 112, 28, 8.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 81, c1_y + 53, 110, 26, 7.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 98) as f32, (c1_y + 66) as f32, 14.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 115, c1_y + 60, 60, 11, 4.0, Rgba([209, 250, 229, 255]));
+    // Stat boxes
+    // Emerald box
+    draw_rounded_rect(&mut img, wx + 80, c1_y + 46, 116, 28, 8.0, Rgba([16, 44, 28, 255]));
+    draw_rounded_rect(&mut img, wx + 80, c1_y + 46, 116, 28, 8.0, Rgba([52, 211, 153, 200]));
+    draw_rounded_rect(&mut img, wx + 81, c1_y + 47, 114, 26, 7.0, Rgba([16, 44, 28, 255]));
+    draw_user_icon(&mut img, (wx + 100) as f32, (c1_y + 60) as f32, 14.0, Rgba([52, 211, 153, 255]));
+    draw_rounded_rect(&mut img, wx + 118, c1_y + 54, 56, 11, 3.0, Rgba([209, 250, 229, 255]));
 
-    draw_rounded_rect(&mut img, wx + 200, c1_y + 52, 112, 28, 8.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + 200, c1_y + 52, 112, 28, 8.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 201, c1_y + 53, 110, 26, 7.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + 218) as f32, (c1_y + 66) as f32, 14.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 235, c1_y + 60, 60, 11, 4.0, Rgba([224, 242, 254, 255]));
+    // Sapphire box
+    draw_rounded_rect(&mut img, wx + 204, c1_y + 46, 116, 28, 8.0, Rgba([18, 36, 58, 255]));
+    draw_rounded_rect(&mut img, wx + 204, c1_y + 46, 116, 28, 8.0, Rgba([96, 165, 250, 200]));
+    draw_rounded_rect(&mut img, wx + 205, c1_y + 47, 114, 26, 7.0, Rgba([18, 36, 58, 255]));
+    draw_eye_icon(&mut img, (wx + 224) as f32, (c1_y + 60) as f32, 14.0, Rgba([96, 165, 250, 255]));
+    draw_rounded_rect(&mut img, wx + 242, c1_y + 54, 60, 11, 3.0, Rgba([224, 242, 254, 255]));
 
-    // Canale 2 (esempio)
-    let c2_y = wy + 164;
-    draw_rounded_rect(&mut img, wx + 14, c2_y, ww - 28, 92, 14.0, Rgba([26, 29, 39, 235]));
-    draw_rounded_rect(&mut img, wx + 14, c2_y, ww - 28, 92, 14.0, Rgba([255, 255, 255, 25]));
+    // Sticky Footer
+    draw_rounded_rect(&mut img, wx + 14, wy + wh - 36, ww - 28, 1, 0.0, Rgba([255, 255, 255, 18]));
+    draw_circle(&mut img, (wx + 130) as f32, (wy + wh - 18) as f32, 3.5, Rgba([34, 197, 94, 255]));
+    draw_circle_stroke(&mut img, (wx + 130) as f32, (wy + wh - 18) as f32, 6.0, 1.5, Rgba([34, 197, 94, 90]));
+    draw_rounded_rect(&mut img, wx + 145, wy + wh - 23, 110, 10, 3.0, Rgba([148, 163, 184, 190]));
 
-    draw_circle(&mut img, (wx + 44) as f32, (c2_y + 46) as f32, 24.0, Rgba([90, 45, 90, 255]));
-    draw_circle_stroke(&mut img, (wx + 44) as f32, (c2_y + 46) as f32, 24.0, 2.0, Rgba([255, 255, 255, 70]));
-
-    draw_rounded_rect(&mut img, wx + 80, c2_y + 16, 100, 12, 4.0, Rgba([255, 255, 255, 240]));
-    draw_rounded_rect(&mut img, wx + 80, c2_y + 34, 70, 9, 3.0, Rgba([148, 163, 184, 210]));
-
-    draw_rounded_rect(&mut img, wx + 80, c2_y + 52, 112, 28, 8.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 80, c2_y + 52, 112, 28, 8.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 81, c2_y + 53, 110, 26, 7.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 98) as f32, (c2_y + 66) as f32, 14.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 115, c2_y + 60, 50, 11, 4.0, Rgba([209, 250, 229, 255]));
-
-    draw_rounded_rect(&mut img, wx + 200, c2_y + 52, 112, 28, 8.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + 200, c2_y + 52, 112, 28, 8.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 201, c2_y + 53, 110, 26, 7.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + 218) as f32, (c2_y + 66) as f32, 14.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 235, c2_y + 60, 65, 11, 4.0, Rgba([224, 242, 254, 255]));
-
-    // Footer sticky
-    let fy = wy + wh - 36;
-    draw_rounded_rect(&mut img, wx + 14, fy, ww - 28, 1, 0.0, Rgba([255, 255, 255, 22]));
-    draw_circle(&mut img, (wx + 115) as f32, (fy + 18) as f32, 4.0, Rgba([34, 197, 94, 255]));
-    draw_circle_stroke(&mut img, (wx + 115) as f32, (fy + 18) as f32, 7.0, 1.5, Rgba([34, 197, 94, 110]));
-    draw_rounded_rect(&mut img, wx + 130, fy + 13, 140, 9, 3.0, Rgba([148, 163, 184, 220]));
-
-    // Resize grip puntini in basso a destra
-    for i in 0..3 {
-        draw_circle(&mut img, (wx + ww - 14 + i * 4) as f32, (wy + wh - 6) as f32, 1.5, Rgba([147, 197, 253, 180]));
-        draw_circle(&mut img, (wx + ww - 10 + i * 4) as f32, (wy + wh - 10) as f32, 1.5, Rgba([147, 197, 253, 180]));
-        draw_circle(&mut img, (wx + ww - 6 + i * 4) as f32, (wy + wh - 14) as f32, 1.5, Rgba([147, 197, 253, 180]));
-    }
-
-    img.save(path).expect("Failed to save normal screenshot");
+    img.save(path).expect("Failed to save screenshot");
     println!("Saved: {}", path.display());
 }
 
-/// Genera screenshot della modalità ultra-compatta
+/// Generates screenshot for compact mode
 fn generate_compact_screenshot(path: &Path) {
-    let w = 400;
-    let h = 260;
+    let w = 420;
+    let h = 320;
     let mut img: RgbaImage = ImageBuffer::new(w, h);
 
-    // Desktop background
+    // Desktop gradient background (dark wallpaper style)
     for y in 0..h {
         let f = y as f32 / h as f32;
         let r = (14.0 + f * 12.0) as u8;
@@ -372,202 +358,212 @@ fn generate_compact_screenshot(path: &Path) {
         }
     }
 
-    // Ultra-compact widget
-    let wx = 95;
+    let wx = 100;
     let wy = 80;
-    let ww = 210;
-    let wh = 96;
+    let ww = 220;
+    let wh = 140;
 
-    // Ombra
-    draw_rounded_rect(&mut img, wx - 4, wy + 3, ww + 8, wh + 8, 12.0, Rgba([0, 0, 0, 110]));
+    // Window shadow
+    draw_rounded_rect(&mut img, wx - 4, wy + 4, ww + 8, wh + 8, 16.0, Rgba([0, 0, 0, 130]));
 
-    // Container
-    draw_rounded_rect(&mut img, wx, wy, ww, wh, 8.0, Rgba([18, 20, 28, 240]));
-    draw_rounded_rect(&mut img, wx, wy, ww, wh, 8.0, Rgba([255, 255, 255, 30]));
+    // Frosted glass SocialCount compact window
+    draw_rounded_rect(&mut img, wx, wy, ww, wh, 10.0, Rgba([18, 20, 28, 235]));
+    draw_rounded_rect(&mut img, wx, wy, ww, wh, 10.0, Rgba([255, 255, 255, 30]));
+    draw_rounded_rect(&mut img, wx + 1, wy + 1, ww - 2, wh - 2, 9.0, Rgba([18, 20, 28, 240]));
 
-    // Mini header con drag handle e close
-    draw_youtube_badge(&mut img, (wx + 14) as f32, (wy + 9) as f32, 12.0, 8.5);
-    draw_rounded_rect(&mut img, wx + (ww / 2) - 15, wy + 7, 30, 3, 1.5, Rgba([255, 255, 255, 80]));
-    draw_circle(&mut img, (wx + ww - 12) as f32, (wy + 9) as f32, 4.0, Rgba([239, 68, 68, 120]));
+    // Compact Header: tiny central drag pill and close button
+    let cx = (wx + ww / 2) as f32;
+    draw_rounded_rect(&mut img, (cx - 14.0) as i32, wy + 5, 28, 3, 1.5, Rgba([255, 255, 255, 120]));
+    draw_circle(&mut img, (wx + ww - 10) as f32, (wy + 7) as f32, 4.0, Rgba([239, 68, 68, 100]));
 
-    // Canale 1 compatto: [ 👤 26 ]  ( Avatar 28px )  [ 👁 2.507 ]
-    let c1_y = wy + 18;
-    draw_rounded_rect(&mut img, wx + 6, c1_y, ww - 12, 34, 6.0, Rgba([24, 27, 36, 230]));
+    // Compact Row 1
+    let r1_y = wy + 16;
+    draw_rounded_rect(&mut img, wx + 6, r1_y, ww - 12, 34, 6.0, Rgba([22, 25, 34, 235]));
 
-    // Box Utenti a sinistra
-    draw_rounded_rect(&mut img, wx + 10, c1_y + 6, 68, 22, 5.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 10, c1_y + 6, 68, 22, 5.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 11, c1_y + 7, 66, 20, 4.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 22) as f32, (c1_y + 17) as f32, 10.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 34, c1_y + 13, 36, 8, 3.0, Rgba([209, 250, 229, 255]));
+    // Left pill
+    draw_rounded_rect(&mut img, wx + 10, r1_y + 6, 70, 22, 5.0, Rgba([16, 44, 28, 255]));
+    draw_rounded_rect(&mut img, wx + 10, r1_y + 6, 70, 22, 5.0, Rgba([52, 211, 153, 200]));
+    draw_user_icon(&mut img, (wx + 22) as f32, (r1_y + 17) as f32, 11.0, Rgba([52, 211, 153, 255]));
+    draw_rounded_rect(&mut img, wx + 34, r1_y + 12, 36, 9, 3.0, Rgba([209, 250, 229, 255]));
 
-    // Avatar rotondo al centro
-    let acx = (wx + ww / 2) as f32;
-    draw_circle(&mut img, acx, (c1_y + 17) as f32, 14.0, Rgba([40, 70, 110, 255]));
-    draw_circle_stroke(&mut img, acx, (c1_y + 17) as f32, 14.0, 1.2, Rgba([255, 255, 255, 90]));
+    // Center avatar
+    draw_circle(&mut img, cx, (r1_y + 17) as f32, 14.0, Rgba([40, 70, 110, 255]));
+    draw_circle_stroke(&mut img, cx, (r1_y + 17) as f32, 14.0, 1.5, Rgba([255, 255, 255, 80]));
 
-    // Box Viste a destra
-    draw_rounded_rect(&mut img, wx + ww - 78, c1_y + 6, 68, 22, 5.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 78, c1_y + 6, 68, 22, 5.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 77, c1_y + 7, 66, 20, 4.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + ww - 66) as f32, (c1_y + 17) as f32, 11.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 54, c1_y + 13, 38, 8, 3.0, Rgba([224, 242, 254, 255]));
-
-    // Canale 2 compatto
-    let c2_y = wy + 55;
-    draw_rounded_rect(&mut img, wx + 6, c2_y, ww - 12, 34, 6.0, Rgba([24, 27, 36, 230]));
-
-    draw_rounded_rect(&mut img, wx + 10, c2_y + 6, 68, 22, 5.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 10, c2_y + 6, 68, 22, 5.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 11, c2_y + 7, 66, 20, 4.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 22) as f32, (c2_y + 17) as f32, 10.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 34, c2_y + 13, 30, 8, 3.0, Rgba([209, 250, 229, 255]));
-
-    draw_circle(&mut img, acx, (c2_y + 17) as f32, 14.0, Rgba([90, 45, 90, 255]));
-    draw_circle_stroke(&mut img, acx, (c2_y + 17) as f32, 14.0, 1.2, Rgba([255, 255, 255, 90]));
-
-    draw_rounded_rect(&mut img, wx + ww - 78, c2_y + 6, 68, 22, 5.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 78, c2_y + 6, 68, 22, 5.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 77, c2_y + 7, 66, 20, 4.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + ww - 66) as f32, (c2_y + 17) as f32, 11.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + ww - 54, c2_y + 13, 40, 8, 3.0, Rgba([224, 242, 254, 255]));
+    // Right pill
+    draw_rounded_rect(&mut img, wx + ww - 80, r1_y + 6, 70, 22, 5.0, Rgba([18, 36, 58, 255]));
+    draw_rounded_rect(&mut img, wx + ww - 80, r1_y + 6, 70, 22, 5.0, Rgba([96, 165, 250, 200]));
+    draw_eye_icon(&mut img, (wx + ww - 68) as f32, (r1_y + 17) as f32, 12.0, Rgba([96, 165, 250, 255]));
+    draw_rounded_rect(&mut img, wx + ww - 56, r1_y + 12, 38, 9, 3.0, Rgba([224, 242, 254, 255]));
 
     img.save(path).expect("Failed to save compact screenshot");
     println!("Saved: {}", path.display());
 }
 
-/// Genera il banner GitHub Social Preview (1280x640)
+/// Generates banner image for GitHub preview
 fn generate_banner(path: &Path) {
     let w = 1280;
     let h = 640;
     let mut img: RgbaImage = ImageBuffer::new(w, h);
 
-    // Sfondo gradiente scuro premium con sfumature rosse e blu/smeraldo
+    // Deep modern dark gradient
     for y in 0..h {
         let fy = y as f32 / h as f32;
         for x in 0..w {
             let fx = x as f32 / w as f32;
-            let d_red = (((fx - 0.2).powi(2) + (fy - 0.4).powi(2)).sqrt() * 2.5).clamp(0.0, 1.0);
-            let d_blue = (((fx - 0.8).powi(2) + (fy - 0.6).powi(2)).sqrt() * 2.2).clamp(0.0, 1.0);
-
-            let r = (16.0 + (1.0 - d_red) * 45.0) as u8;
-            let g = (18.0 + (1.0 - d_blue) * 20.0) as u8;
-            let b = (28.0 + (1.0 - d_blue) * 48.0) as u8;
-
+            let r = (11.0 + fy * 12.0 + fx * 4.0) as u8;
+            let g = (14.0 + fy * 14.0 + fx * 6.0) as u8;
+            let b = (22.0 + fy * 26.0 + fx * 18.0) as u8;
             img.put_pixel(x, y, Rgba([r, g, b, 255]));
         }
     }
 
-    // Pattern a griglia sottile sullo sfondo
-    for y in (0..h).step_by(32) {
-        for x in 0..w {
-            blend_pixel(img.get_pixel_mut(x, y), Rgba([255, 255, 255, 6]));
-        }
-    }
-    for x in (0..w).step_by(32) {
+    // Glowing accents in background
+    let glows = [
+        (250.0, 200.0, 280.0, Rgba([239, 68, 68, 45])),
+        (980.0, 380.0, 320.0, Rgba([52, 211, 153, 30])),
+        (640.0, 520.0, 250.0, Rgba([96, 165, 250, 28])),
+    ];
+
+    for (gx, gy, gr, color) in glows {
         for y in 0..h {
-            blend_pixel(img.get_pixel_mut(x, y), Rgba([255, 255, 255, 6]));
+            for x in 0..w {
+                let dx = x as f32 - gx;
+                let dy = y as f32 - gy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist < gr {
+                    let factor = (1.0 - dist / gr).powf(2.0);
+                    let mut aa = color;
+                    aa[3] = ((color[3] as f32) * factor) as u8;
+                    blend_pixel(img.get_pixel_mut(x, y), aa);
+                }
+            }
         }
     }
 
-    // LATO SINISTRO: Testi e Branding
-    // Logo YouTube grande
-    draw_youtube_badge(&mut img, 150.0, 160.0, 110.0, 76.0);
+    // Left side: Large Hero Card with App Logo & Branding
+    let card_x = 100;
+    let card_y = 100;
+    let card_w = 460;
+    let card_h = 440;
 
-    // Titolo "SocialCount"
-    draw_rounded_rect(&mut img, 230, 125, 360, 40, 8.0, Rgba([255, 255, 255, 255]));
+    // Card shadow
+    draw_rounded_rect(&mut img, card_x - 6, card_y + 8, card_w + 12, card_h + 12, 28.0, Rgba([0, 0, 0, 140]));
+    // Card body
+    draw_rounded_rect(&mut img, card_x, card_y, card_w, card_h, 24.0, Rgba([18, 22, 32, 245]));
+    draw_rounded_rect(&mut img, card_x, card_y, card_w, card_h, 24.0, Rgba([255, 255, 255, 30]));
+    draw_rounded_rect(&mut img, card_x + 1, card_y + 1, card_w - 2, card_h - 2, 23.0, Rgba([16, 19, 28, 250]));
 
-    // Sottotitolo "Real-time YouTube Channel Statistics Widget in Rust"
-    draw_rounded_rect(&mut img, 100, 235, 480, 16, 5.0, Rgba([220, 228, 245, 220]));
-    draw_rounded_rect(&mut img, 100, 265, 420, 14, 4.0, Rgba([148, 163, 184, 200]));
+    // Large YouTube badge in Hero
+    draw_youtube_badge(&mut img, (card_x + card_w / 2) as f32, (card_y + 120) as f32, 170.0, 116.0);
 
-    // Feature Badges
-    // 1. Rust Powered
-    draw_rounded_rect(&mut img, 100, 315, 140, 36, 18.0, Rgba([249, 115, 22, 40]));
-    draw_rounded_rect(&mut img, 100, 315, 140, 36, 18.0, Rgba([249, 115, 22, 180]));
-    draw_rounded_rect(&mut img, 125, 328, 90, 10, 3.0, Rgba([255, 237, 213, 255]));
+    // Title placeholder line
+    draw_rounded_rect(&mut img, card_x + 80, card_y + 205, card_w - 160, 20, 6.0, Rgba([255, 255, 255, 240]));
 
-    // 2. Transparent Window
-    draw_rounded_rect(&mut img, 255, 315, 165, 36, 18.0, Rgba([147, 197, 253, 35]));
-    draw_rounded_rect(&mut img, 255, 315, 165, 36, 18.0, Rgba([147, 197, 253, 180]));
-    draw_rounded_rect(&mut img, 280, 328, 115, 10, 3.0, Rgba([239, 246, 255, 255]));
+    // Subtitle placeholder line
+    draw_rounded_rect(&mut img, card_x + 60, card_y + 240, card_w - 120, 12, 4.0, Rgba([148, 163, 184, 210]));
+    draw_rounded_rect(&mut img, card_x + 90, card_y + 260, card_w - 180, 10, 4.0, Rgba([100, 116, 139, 180]));
 
-    // 3. Ultra-compact
-    draw_rounded_rect(&mut img, 435, 315, 145, 36, 18.0, Rgba([52, 211, 153, 35]));
-    draw_rounded_rect(&mut img, 435, 315, 145, 36, 18.0, Rgba([52, 211, 153, 180]));
-    draw_rounded_rect(&mut img, 460, 328, 95, 10, 3.0, Rgba([236, 253, 245, 255]));
+    // Stat boxes in Hero
+    let box_y = card_y + 300;
+    // Users
+    draw_rounded_rect(&mut img, card_x + 50, box_y, 160, 62, 14.0, Rgba([16, 44, 28, 255]));
+    draw_rounded_rect(&mut img, card_x + 50, box_y, 160, 62, 14.0, Rgba([52, 211, 153, 220]));
+    draw_rounded_rect(&mut img, card_x + 51, box_y + 1, 158, 60, 13.0, Rgba([16, 44, 28, 255]));
+    draw_user_icon(&mut img, (card_x + 85) as f32, (box_y + 31) as f32, 22.0, Rgba([52, 211, 153, 255]));
+    draw_rounded_rect(&mut img, card_x + 105, box_y + 25, 80, 13, 4.0, Rgba([209, 250, 229, 255]));
 
-    // Autore e Repo in basso a sinistra
-    draw_rounded_rect(&mut img, 100, 480, 180, 14, 4.0, Rgba([255, 255, 255, 240])); // by Matteo Baccan
-    draw_rounded_rect(&mut img, 100, 505, 320, 12, 4.0, Rgba([148, 163, 184, 180])); // github.com/matteobaccan/SocialCount
+    // Views
+    draw_rounded_rect(&mut img, card_x + 245, box_y, 160, 62, 14.0, Rgba([18, 36, 58, 255]));
+    draw_rounded_rect(&mut img, card_x + 245, box_y, 160, 62, 14.0, Rgba([96, 165, 250, 220]));
+    draw_rounded_rect(&mut img, card_x + 246, box_y + 1, 158, 60, 13.0, Rgba([18, 36, 58, 255]));
+    draw_eye_icon(&mut img, (card_x + 280) as f32, (box_y + 31) as f32, 22.0, Rgba([96, 165, 250, 255]));
+    draw_rounded_rect(&mut img, card_x + 300, box_y + 25, 80, 13, 4.0, Rgba([224, 242, 254, 255]));
 
-    // LATO DESTRO: Anteprima mock del widget SocialCount
-    let wx = 760;
-    let wy = 85;
-    let ww = 380;
-    let wh = 470;
+    // Pulsing live indicator
+    draw_circle(&mut img, (card_x + 160) as f32, (card_y + 395) as f32, 5.0, Rgba([34, 197, 94, 255]));
+    draw_circle_stroke(&mut img, (card_x + 160) as f32, (card_y + 395) as f32, 9.0, 2.0, Rgba([34, 197, 94, 100]));
+    draw_rounded_rect(&mut img, card_x + 180, card_y + 390, 120, 10, 4.0, Rgba([148, 163, 184, 210]));
 
-    // Ombra
-    draw_rounded_rect(&mut img, wx - 12, wy + 8, ww + 24, wh + 24, 26.0, Rgba([0, 0, 0, 140]));
+    // Right side: Floating Realistic App Mockup
+    let mock_x = 640;
+    let mock_y = 120;
+    let mock_w = 480;
+    let mock_h = 400;
 
-    // Widget Window
-    draw_rounded_rect(&mut img, wx, wy, ww, wh, 18.0, Rgba([18, 20, 28, 245]));
-    draw_rounded_rect(&mut img, wx, wy, ww, wh, 18.0, Rgba([255, 255, 255, 35]));
+    // Window shadow
+    draw_rounded_rect(&mut img, mock_x - 8, mock_y + 12, mock_w + 16, mock_h + 16, 26.0, Rgba([0, 0, 0, 150]));
+    // Window body
+    draw_rounded_rect(&mut img, mock_x, mock_y, mock_w, mock_h, 20.0, Rgba([18, 20, 28, 240]));
+    draw_rounded_rect(&mut img, mock_x, mock_y, mock_w, mock_h, 20.0, Rgba([255, 255, 255, 30]));
+    draw_rounded_rect(&mut img, mock_x + 1, mock_y + 1, mock_w - 2, mock_h - 2, 19.0, Rgba([18, 20, 28, 245]));
 
-    // Header
-    draw_youtube_badge(&mut img, (wx + 28) as f32, (wy + 26) as f32, 22.0, 15.0);
-    draw_rounded_rect(&mut img, wx + 48, wy + 20, 95, 13, 4.0, Rgba([255, 255, 255, 240]));
-    draw_rounded_rect(&mut img, wx + 230, wy + 23, 65, 6, 3.0, Rgba([80, 85, 100, 220]));
-    draw_circle(&mut img, (wx + 270) as f32, (wy + 26) as f32, 6.0, Rgba([255, 255, 255, 240]));
-    draw_circle(&mut img, (wx + 348) as f32, (wy + 26) as f32, 9.0, Rgba([239, 68, 68, 80]));
+    // Header mockup
+    draw_youtube_badge(&mut img, (mock_x + 30) as f32, (mock_y + 26) as f32, 22.0, 15.0);
+    draw_rounded_rect(&mut img, mock_x + 50, mock_y + 20, 110, 13, 4.0, Rgba([255, 255, 255, 230]));
+    draw_rounded_rect(&mut img, mock_x + 300, mock_y + 23, 70, 7, 3.5, Rgba([80, 85, 100, 220]));
+    draw_circle(&mut img, (mock_x + 345) as f32, (mock_y + 26) as f32, 7.0, Rgba([255, 255, 255, 240]));
+    draw_circle_stroke(&mut img, (mock_x + 395) as f32, (mock_y + 26) as f32, 7.0, 2.0, Rgba([147, 197, 253, 240]));
+    draw_circle(&mut img, (mock_x + 435) as f32, (mock_y + 26) as f32, 9.0, Rgba([239, 68, 68, 90]));
 
-    // Card 1
-    let c1_y = wy + 65;
-    draw_rounded_rect(&mut img, wx + 16, c1_y, ww - 32, 95, 14.0, Rgba([26, 29, 39, 245]));
-    draw_rounded_rect(&mut img, wx + 16, c1_y, ww - 32, 95, 14.0, Rgba([255, 255, 255, 25]));
-    draw_circle(&mut img, (wx + 48) as f32, (c1_y + 48) as f32, 25.0, Rgba([40, 70, 110, 255]));
-    draw_circle_stroke(&mut img, (wx + 48) as f32, (c1_y + 48) as f32, 25.0, 2.0, Rgba([255, 255, 255, 80]));
-    draw_rounded_rect(&mut img, wx + 86, c1_y + 18, 130, 13, 4.0, Rgba([255, 255, 255, 250]));
-    draw_rounded_rect(&mut img, wx + 86, c1_y + 36, 85, 10, 3.0, Rgba([148, 163, 184, 210]));
+    // Divider
+    draw_rounded_rect(&mut img, mock_x + 16, mock_y + 50, mock_w - 32, 1, 0.0, Rgba([255, 255, 255, 22]));
 
-    draw_rounded_rect(&mut img, wx + 86, c1_y + 54, 116, 28, 8.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 86, c1_y + 54, 116, 28, 8.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 87, c1_y + 55, 114, 26, 7.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 104) as f32, (c1_y + 68) as f32, 14.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 122, c1_y + 62, 60, 11, 4.0, Rgba([209, 250, 229, 255]));
+    // Channel Row in Mockup
+    let row_y = mock_y + 68;
+    draw_rounded_rect(&mut img, mock_x + 16, row_y, mock_w - 32, 100, 14.0, Rgba([26, 29, 39, 235]));
+    draw_rounded_rect(&mut img, mock_x + 16, row_y, mock_w - 32, 100, 14.0, Rgba([255, 255, 255, 25]));
 
-    draw_rounded_rect(&mut img, wx + 212, c1_y + 54, 116, 28, 8.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + 212, c1_y + 54, 116, 28, 8.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 213, c1_y + 55, 114, 26, 7.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + 230) as f32, (c1_y + 68) as f32, 14.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 248, c1_y + 62, 62, 11, 4.0, Rgba([224, 242, 254, 255]));
+    // Avatar
+    draw_circle(&mut img, (mock_x + 52) as f32, (row_y + 50) as f32, 28.0, Rgba([40, 70, 110, 255]));
+    draw_circle_stroke(&mut img, (mock_x + 52) as f32, (row_y + 50) as f32, 28.0, 2.0, Rgba([255, 255, 255, 70]));
 
-    // Card 2
-    let c2_y = wy + 175;
-    draw_rounded_rect(&mut img, wx + 16, c2_y, ww - 32, 95, 14.0, Rgba([26, 29, 39, 245]));
-    draw_rounded_rect(&mut img, wx + 16, c2_y, ww - 32, 95, 14.0, Rgba([255, 255, 255, 25]));
-    draw_circle(&mut img, (wx + 48) as f32, (c2_y + 48) as f32, 25.0, Rgba([90, 45, 90, 255]));
-    draw_circle_stroke(&mut img, (wx + 48) as f32, (c2_y + 48) as f32, 25.0, 2.0, Rgba([255, 255, 255, 80]));
-    draw_rounded_rect(&mut img, wx + 86, c2_y + 18, 110, 13, 4.0, Rgba([255, 255, 255, 250]));
-    draw_rounded_rect(&mut img, wx + 86, c2_y + 36, 75, 10, 3.0, Rgba([148, 163, 184, 210]));
+    // Handle and name
+    draw_rounded_rect(&mut img, mock_x + 94, row_y + 18, 140, 15, 4.0, Rgba([255, 255, 255, 240]));
+    draw_rounded_rect(&mut img, mock_x + 245, row_y + 20, 100, 11, 3.0, Rgba([148, 163, 184, 180]));
 
-    draw_rounded_rect(&mut img, wx + 86, c2_y + 54, 116, 28, 8.0, Rgba([16, 44, 28, 255]));
-    draw_rounded_rect(&mut img, wx + 86, c2_y + 54, 116, 28, 8.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 87, c2_y + 55, 114, 26, 7.0, Rgba([16, 44, 28, 255]));
-    draw_user_icon(&mut img, (wx + 104) as f32, (c2_y + 68) as f32, 14.0, Rgba([52, 211, 153, 255]));
-    draw_rounded_rect(&mut img, wx + 122, c2_y + 62, 52, 11, 4.0, Rgba([209, 250, 229, 255]));
+    // Counter pills in row
+    // Users
+    draw_rounded_rect(&mut img, mock_x + 94, row_y + 50, 160, 32, 8.0, Rgba([16, 44, 28, 255]));
+    draw_rounded_rect(&mut img, mock_x + 94, row_y + 50, 160, 32, 8.0, Rgba([52, 211, 153, 200]));
+    draw_rounded_rect(&mut img, mock_x + 95, row_y + 51, 158, 30, 7.0, Rgba([16, 44, 28, 255]));
+    draw_user_icon(&mut img, (mock_x + 120) as f32, (row_y + 66) as f32, 16.0, Rgba([52, 211, 153, 255]));
+    draw_rounded_rect(&mut img, mock_x + 140, row_y + 59, 90, 14, 4.0, Rgba([209, 250, 229, 255]));
 
-    draw_rounded_rect(&mut img, wx + 212, c2_y + 54, 116, 28, 8.0, Rgba([18, 36, 58, 255]));
-    draw_rounded_rect(&mut img, wx + 212, c2_y + 54, 116, 28, 8.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 213, c2_y + 55, 114, 26, 7.0, Rgba([18, 36, 58, 255]));
-    draw_eye_icon(&mut img, (wx + 230) as f32, (c2_y + 68) as f32, 14.0, Rgba([96, 165, 250, 255]));
-    draw_rounded_rect(&mut img, wx + 248, c2_y + 62, 68, 11, 4.0, Rgba([224, 242, 254, 255]));
+    // Views
+    draw_rounded_rect(&mut img, mock_x + 270, row_y + 50, 160, 32, 8.0, Rgba([18, 36, 58, 255]));
+    draw_rounded_rect(&mut img, mock_x + 270, row_y + 50, 160, 32, 8.0, Rgba([96, 165, 250, 200]));
+    draw_rounded_rect(&mut img, mock_x + 271, row_y + 51, 158, 30, 7.0, Rgba([18, 36, 58, 255]));
+    draw_eye_icon(&mut img, (mock_x + 296) as f32, (row_y + 66) as f32, 16.0, Rgba([96, 165, 250, 255]));
+    draw_rounded_rect(&mut img, mock_x + 316, row_y + 59, 90, 14, 4.0, Rgba([224, 242, 254, 255]));
 
-    // Footer
-    let fy = wy + wh - 40;
-    draw_circle(&mut img, (wx + 130) as f32, (fy + 18) as f32, 4.0, Rgba([34, 197, 94, 255]));
-    draw_circle_stroke(&mut img, (wx + 130) as f32, (fy + 18) as f32, 7.0, 1.5, Rgba([34, 197, 94, 110]));
-    draw_rounded_rect(&mut img, wx + 146, fy + 13, 140, 10, 3.0, Rgba([148, 163, 184, 220]));
+    // Compact floating widget overlayed on bottom right
+    let cw_x = mock_x + 180;
+    let cw_y = mock_y + 220;
+    let cw_w = 260;
+    let cw_h = 140;
+
+    draw_rounded_rect(&mut img, cw_x - 6, cw_y + 8, cw_w + 12, cw_h + 12, 18.0, Rgba([0, 0, 0, 160]));
+    draw_rounded_rect(&mut img, cw_x, cw_y, cw_w, cw_h, 14.0, Rgba([15, 18, 25, 245]));
+    draw_rounded_rect(&mut img, cw_x, cw_y, cw_w, cw_h, 14.0, Rgba([255, 255, 255, 40]));
+
+    // Compact pill handle
+    let cw_cx = (cw_x + cw_w / 2) as f32;
+    draw_rounded_rect(&mut img, (cw_cx - 16.0) as i32, cw_y + 6, 32, 3, 1.5, Rgba([255, 255, 255, 130]));
+
+    // Compact row
+    let cr_y = cw_y + 20;
+    draw_rounded_rect(&mut img, cw_x + 8, cr_y, cw_w - 16, 42, 8.0, Rgba([24, 28, 38, 240]));
+    draw_rounded_rect(&mut img, cw_x + 14, cr_y + 8, 80, 26, 6.0, Rgba([16, 44, 28, 255]));
+    draw_user_icon(&mut img, (cw_x + 28) as f32, (cr_y + 21) as f32, 12.0, Rgba([52, 211, 153, 255]));
+    draw_rounded_rect(&mut img, cw_x + 42, cr_y + 16, 44, 10, 3.0, Rgba([209, 250, 229, 255]));
+
+    draw_circle(&mut img, cw_cx, (cr_y + 21) as f32, 16.0, Rgba([40, 70, 110, 255]));
+    draw_circle_stroke(&mut img, cw_cx, (cr_y + 21) as f32, 16.0, 1.5, Rgba([255, 255, 255, 80]));
+
+    draw_rounded_rect(&mut img, cw_x + cw_w - 94, cr_y + 8, 80, 26, 6.0, Rgba([18, 36, 58, 255]));
+    draw_eye_icon(&mut img, (cw_x + cw_w - 80) as f32, (cr_y + 21) as f32, 13.0, Rgba([96, 165, 250, 255]));
+    draw_rounded_rect(&mut img, cw_x + cw_w - 66, cr_y + 16, 44, 10, 3.0, Rgba([224, 242, 254, 255]));
 
     img.save(path).expect("Failed to save banner");
     println!("Saved: {}", path.display());
@@ -576,13 +572,13 @@ fn generate_banner(path: &Path) {
 fn main() {
     let assets_dir = Path::new("assets");
     if !assets_dir.exists() {
-        fs::create_dir_all(assets_dir).expect("Failed to create assets directory");
+        fs::create_dir_all(assets_dir).expect("Failed to create assets dir");
     }
 
-    println!("Generating assets...");
     generate_logo(&assets_dir.join("logo.png"));
-    generate_banner(&assets_dir.join("socialcount-banner.png"));
     generate_normal_screenshot(&assets_dir.join("screenshot-normal.png"));
     generate_compact_screenshot(&assets_dir.join("screenshot-compact.png"));
-    println!("All assets successfully generated in assets/");
+    generate_banner(&assets_dir.join("socialcount-banner.png"));
+
+    println!("All assets successfully generated!");
 }

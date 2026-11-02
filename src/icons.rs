@@ -5,7 +5,7 @@
 use eframe::egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
 use eframe::epaint::QuadraticBezierShape;
 
-/// Disegna il logo YouTube vettoriale
+/// Draws the vector YouTube badge logo
 pub fn draw_youtube_icon(painter: &Painter, rect: Rect) {
     let center = rect.center();
     let width = 20.0_f32;
@@ -13,18 +13,18 @@ pub fn draw_youtube_icon(painter: &Painter, rect: Rect) {
 
     let badge_rect = Rect::from_center_size(center, Vec2::new(width, height));
 
-    // Badge rosso con angoli arrotondati
+    // Red badge with rounded corners
     let red_color = Color32::from_rgb(255, 35, 35);
     painter.rect_filled(badge_rect, 4.0_f32, red_color);
 
-    // Bordo sottile di riflesso
+    // Subtle reflection stroke
     painter.rect_stroke(
         badge_rect,
         4.0_f32,
         Stroke::new(1.0_f32, Color32::from_white_alpha(40)),
     );
 
-    // Triangolo play bianco al centro
+    // Centered white play triangle
     let tri_h = 3.5_f32;
     let tri_w = 4.0_f32;
     let p0 = Pos2::new(center.x - tri_w * 0.45, center.y - tri_h);
@@ -38,13 +38,13 @@ pub fn draw_youtube_icon(painter: &Painter, rect: Rect) {
     ));
 }
 
-/// Disegna l'icona utente/iscritti vettoriale (stile minimalista moderno)
+/// Draws modern minimalist vector user/subscriber icon
 pub fn draw_user_icon(painter: &Painter, rect: Rect, color: Color32) {
     let stroke = Stroke::new(1.6_f32, color);
     let center = rect.center();
     let h = rect.height();
 
-    // Testa: cerchio con riempimento semitrasparente e contorno netto
+    // Head: circle with semitransparent fill and clean outline
     let head_center = Pos2::new(center.x, center.y - h * 0.17);
     let head_radius = h * 0.23;
     let fill_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
@@ -52,7 +52,7 @@ pub fn draw_user_icon(painter: &Painter, rect: Rect, color: Color32) {
     painter.circle_filled(head_center, head_radius, fill_color);
     painter.circle_stroke(head_center, head_radius, stroke);
 
-    // Spalle: arco curvo
+    // Shoulders: curved arc
     let y_bottom = center.y + h * 0.38;
     let y_ctrl = center.y + h * 0.08;
     let half_w = rect.width() * 0.39;
@@ -69,7 +69,7 @@ pub fn draw_user_icon(painter: &Painter, rect: Rect, color: Color32) {
     ));
 }
 
-/// Disegna l'icona occhio/visualizzazioni vettoriale (con pupilla e punto luce)
+/// Draws vector eye/views icon (with pupil and catchlight highlight)
 pub fn draw_eye_icon(painter: &Painter, rect: Rect, color: Color32) {
     let stroke = Stroke::new(1.6_f32, color);
     let center = rect.center();
@@ -79,7 +79,7 @@ pub fn draw_eye_icon(painter: &Painter, rect: Rect, color: Color32) {
     let p_left = Pos2::new(center.x - half_w, center.y);
     let p_right = Pos2::new(center.x + half_w, center.y);
 
-    // Palpebra superiore
+    // Upper eyelid
     let ctrl_top = Pos2::new(center.x, center.y - half_h * 1.55);
     painter.add(QuadraticBezierShape::from_points_stroke(
         [p_left, ctrl_top, p_right],
@@ -88,7 +88,7 @@ pub fn draw_eye_icon(painter: &Painter, rect: Rect, color: Color32) {
         stroke,
     ));
 
-    // Palpebra inferiore
+    // Lower eyelid
     let ctrl_bot = Pos2::new(center.x, center.y + half_h * 1.55);
     painter.add(QuadraticBezierShape::from_points_stroke(
         [p_left, ctrl_bot, p_right],
@@ -97,28 +97,31 @@ pub fn draw_eye_icon(painter: &Painter, rect: Rect, color: Color32) {
         stroke,
     ));
 
-    // Iride / Pupilla
-    let pupil_radius = half_h * 0.85;
-    painter.circle_filled(center, pupil_radius, color);
+    // Iris / Pupil
+    let pupil_radius = half_h * 0.70;
+    let fill_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 75);
+    painter.circle_filled(center, pupil_radius, fill_color);
+    painter.circle_stroke(center, pupil_radius, stroke);
 
-    // Punto luce (catchlight) bianco per profondità visiva
-    let light_center = Pos2::new(center.x - pupil_radius * 0.35, center.y - pupil_radius * 0.35);
-    painter.circle_filled(light_center, pupil_radius * 0.35, Color32::WHITE);
+    // Tiny white catchlight reflection
+    let catchlight_center = Pos2::new(center.x - pupil_radius * 0.35, center.y - pupil_radius * 0.35);
+    painter.circle_filled(catchlight_center, 1.2_f32, Color32::WHITE);
 }
 
-/// Disegna un indicatore di stato live pulsante (dot verde o ambra)
+/// Draws pulsing emerald green live status dot
 pub fn draw_live_dot(painter: &Painter, center: Pos2, is_loading: bool, time: f64) {
-    let (base_color, halo_color) = if is_loading {
-        (Color32::from_rgb(251, 191, 36), Color32::from_rgba_unmultiplied(251, 191, 36, 70))
+    if is_loading {
+        // Yellow pulsing dot when loading
+        let pulse = ((time * 6.0).sin() * 0.5 + 0.5) as f32;
+        let radius = 3.5_f32 + pulse * 1.5_f32;
+        painter.circle_filled(center, radius, Color32::from_rgba_unmultiplied(251, 191, 36, 120));
+        painter.circle_filled(center, 3.0_f32, Color32::from_rgb(251, 191, 36));
     } else {
-        (Color32::from_rgb(52, 211, 153), Color32::from_rgba_unmultiplied(52, 211, 153, 70))
-    };
-
-    // Pulsazione periodica
-    let pulse = ((time * 3.0).sin() * 0.5 + 0.5) as f32;
-    let halo_radius = 4.0_f32 + pulse * 2.0_f32;
-
-    painter.circle_filled(center, halo_radius, halo_color);
-    painter.circle_filled(center, 3.0_f32, base_color);
-    painter.circle_filled(center, 1.2_f32, Color32::WHITE);
+        // Emerald pulsing dot when live
+        let pulse = ((time * 2.8).sin() * 0.5 + 0.5) as f32;
+        let halo_radius = 4.0_f32 + pulse * 2.5_f32;
+        let alpha = (120.0 * (1.0 - pulse)).round() as u8;
+        painter.circle_filled(center, halo_radius, Color32::from_rgba_unmultiplied(34, 197, 94, alpha));
+        painter.circle_filled(center, 3.2_f32, Color32::from_rgb(34, 197, 94));
+    }
 }
