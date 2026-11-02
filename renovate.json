@@ -2,5 +2,11 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "groupName": "egui monorepo",
+      "matchPackageNames": ["eframe", "egui", "egui_extras", "epaint", "emath"]
+    }
   ]
 }
