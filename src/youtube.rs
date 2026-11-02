@@ -43,6 +43,14 @@ impl ChannelData {
             views_changed_at: None,
         }
     }
+
+    pub fn has_error(&self) -> bool {
+        self.error.is_some()
+            || self.subscriber_text == "N/A"
+            || self.subscriber_text == "N/D"
+            || self.views_text == "N/A"
+            || self.views_text == "N/D"
+    }
 }
 
 pub struct YouTubeFetcher {
@@ -352,6 +360,29 @@ pub fn parse_subscriber_count(text: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_channel_has_error() {
+        let mut ch = ChannelData::new_loading("@test");
+        assert!(!ch.has_error());
+
+        ch.error = Some("Connection error".to_string());
+        assert!(ch.has_error());
+
+        ch.error = None;
+        ch.subscriber_text = "N/A".to_string();
+        assert!(ch.has_error());
+
+        ch.subscriber_text = "N/D".to_string();
+        assert!(ch.has_error());
+
+        ch.subscriber_text = "100 subscribers".to_string();
+        ch.views_text = "N/A".to_string();
+        assert!(ch.has_error());
+
+        ch.views_text = "1,000 views".to_string();
+        assert!(!ch.has_error());
+    }
 
     #[test]
     fn test_clean_stat_number() {

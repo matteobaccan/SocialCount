@@ -231,6 +231,7 @@ pub struct SocialCountApp {
     is_loading: bool,
     last_refresh: Instant,
     last_refresh_str: String,
+    last_channel_fetch: HashMap<String, Instant>,
     card_opacity: u8,
     is_compact: bool,
     pre_compact_size: Option<Vec2>,
@@ -281,6 +282,7 @@ impl SocialCountApp {
             is_loading: false,
             last_refresh: Instant::now(),
             last_refresh_str: chrono_or_fallback_time(),
+            last_channel_fetch: HashMap::new(),
             card_opacity,
             is_compact,
             pre_compact_size,
@@ -329,27 +331,32 @@ impl SocialCountApp {
     }
 
     fn trigger_refresh(&mut self) {
-        if self.is_loading {
+        self.config = Config::load_or_create();
+        let handles = self.config.channels.clone();
+        self.trigger_refresh_channels(handles);
+    }
+
+    fn trigger_refresh_channels(&mut self, handles: Vec<String>) {
+        if self.is_loading || handles.is_empty() {
             return;
         }
 
         self.config = Config::load_or_create();
 
-        for handle in &self.config.channels {
+        for handle in &handles {
             if !self.channels.iter().any(|c| &c.handle == handle) {
                 self.channels.push(ChannelData::new_loading(handle));
             }
         }
 
         for ch in &mut self.channels {
-            if ch.subscriber_count == 0 {
+            if handles.contains(&ch.handle) && ch.subscriber_count == 0 {
                 ch.subscriber_text = "Loading...".to_string();
             }
         }
 
         self.is_loading = true;
         let tx = self.tx.clone();
-        let handles = self.config.channels.clone();
 
         thread::spawn(move || {
             let fetcher = Arc::new(YouTubeFetcher::new());
@@ -368,6 +375,7 @@ impl SocialCountApp {
             match msg {
                 WorkerMessage::ChannelUpdated(new_data_box) => {
                     let mut new_data = *new_data_box;
+                    self.last_channel_fetch.insert(new_data.handle.clone(), Instant::now());
                     if let Some(bytes) = &new_data.avatar_bytes {
                         if let Ok(img) = image::load_from_memory(bytes) {
                             let mut rgba = img.to_rgba8();
@@ -408,6 +416,16 @@ impl SocialCountApp {
 
                     if let Some(pos) = self.channels.iter().position(|c| c.handle == new_data.handle) {
                         let old = &self.channels[pos];
+
+                        // Preserve avatar and title if new fetch failed or lacked image
+                        if new_data.avatar_bytes.is_none() && old.avatar_bytes.is_some() {
+                            new_data.avatar_bytes = old.avatar_bytes.clone();
+                        }
+                        if (new_data.title.is_empty() || new_data.title == new_data.handle.trim_start_matches('@'))
+                            && !old.title.is_empty()
+                        {
+                            new_data.title = old.title.clone();
+                        }
 
                         // Detect if subscriber count changed compared to previously known valid value
                         if old.subscriber_count > 0 && new_data.subscriber_count > 0 && new_data.subscriber_count != old.subscriber_count {
@@ -490,9 +508,42 @@ impl eframe::App for SocialCountApp {
 
         self.update_textures(ctx);
 
-        let interval = Duration::from_secs(self.config.refresh_interval_secs.max(30));
-        if self.last_refresh.elapsed() >= interval {
-            self.trigger_refresh();
+        // Periodic refresh check:
+        // If a channel had an error or reported N/A / N/D, retry 1 minute (60s) later.
+        // Otherwise, refresh according to refresh_interval_secs (default: 300s = 5m).
+        if !self.is_loading {
+            let normal_interval = Duration::from_secs(self.config.refresh_interval_secs.max(30));
+            let retry_interval = Duration::from_secs(60);
+
+            let mut to_refresh = Vec::new();
+            for ch in &self.channels {
+                let last = self
+                    .last_channel_fetch
+                    .get(&ch.handle)
+                    .copied()
+                    .unwrap_or(self.last_refresh);
+
+                let interval = if ch.has_error() {
+                    retry_interval
+                } else {
+                    normal_interval
+                };
+
+                if last.elapsed() >= interval {
+                    to_refresh.push(ch.handle.clone());
+                }
+            }
+
+            // Also check for newly configured channels not yet in memory
+            for handle in &self.config.channels {
+                if !self.channels.iter().any(|c| &c.handle == handle) && !to_refresh.contains(handle) {
+                    to_refresh.push(handle.clone());
+                }
+            }
+
+            if !to_refresh.is_empty() {
+                self.trigger_refresh_channels(to_refresh);
+            }
         }
 
         if self.is_loading {
@@ -1112,7 +1163,7 @@ impl SocialCountApp {
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        let title_resp = ui.add(
+                        let mut title_resp = ui.add(
                             egui::Link::new(
                                 egui::RichText::new(&channel.title)
                                     .strong()
@@ -1120,6 +1171,11 @@ impl SocialCountApp {
                                     .color(Color32::from_rgb(255, 255, 255)),
                             )
                         );
+                        if let Some(err) = &channel.error {
+                            title_resp = title_resp.on_hover_text(format!("Error: {} (Retrying in 1m)", err));
+                        } else if channel.has_error() {
+                            title_resp = title_resp.on_hover_text("Stat unavailable (Retrying in 1m)");
+                        }
                         if title_resp.clicked() {
                             let _ = open::that(&channel.channel_url);
                         }
@@ -1315,6 +1371,11 @@ impl SocialCountApp {
                 avatar_resp.on_hover_ui(|ui| {
                     ui.label(egui::RichText::new(&channel.title).strong().color(Color32::WHITE));
                     ui.label(egui::RichText::new(&channel.handle).color(Color32::from_rgb(148, 163, 184)));
+                    if let Some(err) = &channel.error {
+                        ui.label(egui::RichText::new(format!("⚠️ {} (Retrying in 1m)", err)).size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                    } else if channel.has_error() {
+                        ui.label(egui::RichText::new("⚠️ Stat unavailable (Retrying in 1m)").size(10.0).color(Color32::from_rgb(239, 68, 68)));
+                    }
                 });
 
                 // --- RIGHT CORNER: VIEWS COUNTER ---
