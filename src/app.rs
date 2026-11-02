@@ -63,6 +63,11 @@ impl SocialCountApp {
             .collect();
 
         let card_opacity = config.card_opacity;
+        let is_compact = config.compact_mode;
+        let pre_compact_size = Some(Vec2::new(
+            config.window_width.max(280.0),
+            config.window_height.max(160.0),
+        ));
 
         let mut app = Self {
             config,
@@ -74,8 +79,8 @@ impl SocialCountApp {
             last_refresh: Instant::now(),
             last_refresh_str: chrono_or_fallback_time(),
             card_opacity,
-            is_compact: false,
-            pre_compact_size: None,
+            is_compact,
+            pre_compact_size,
             resize_drag: None,
         };
 
@@ -85,18 +90,28 @@ impl SocialCountApp {
 
     fn toggle_compact(&mut self, ctx: &egui::Context) {
         self.is_compact = !self.is_compact;
-        if self.is_compact {
+        self.config.compact_mode = self.is_compact;
+
+        let target_size = if self.is_compact {
             let current_size = ctx.screen_rect().size();
             self.pre_compact_size = Some(current_size);
+            self.config.window_width = current_size.x;
+            self.config.window_height = current_size.y;
             // Calcolo altezza ultra-compatta: ~36px per canale + spazio header compatto
             let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
             let compact_w = 205.0_f32;
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(compact_w, compact_h)));
-        } else if let Some(prev) = self.pre_compact_size.take() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(prev));
+            Vec2::new(compact_w, compact_h)
         } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(360.0, 440.0)));
-        }
+            self.pre_compact_size.unwrap_or_else(|| {
+                Vec2::new(self.config.window_width.max(280.0), self.config.window_height.max(160.0))
+            })
+        };
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(target_size));
+        ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(target_size));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+
+        let _ = self.config.save();
     }
 
     fn trigger_refresh(&mut self) {
@@ -266,21 +281,7 @@ impl eframe::App for SocialCountApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
 
-        // Protezione anti-allargamento multi-monitor: stabilizza costantemente la dimensione logica
-        // evitando il ballooning di winit/Windows quando si passa tra monitor con DPI differenti
-        let target_size = if self.is_compact {
-            let compact_h = (20.0 + self.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
-            Vec2::new(205.0, compact_h)
-        } else {
-            self.pre_compact_size.unwrap_or(Vec2::new(360.0, 440.0))
-        };
 
-        if self.resize_drag.is_none() {
-            let current_size = ctx.screen_rect().size();
-            if (current_size.x - target_size.x).abs() > 3.0 || (current_size.y - target_size.y).abs() > 3.0 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
-            }
-        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(Color32::TRANSPARENT).inner_margin(Margin::same(4.0)))
@@ -413,13 +414,7 @@ impl SocialCountApp {
             self.toggle_compact(ctx);
         }
         if header_resp.dragged_by(egui::PointerButton::Primary) {
-            let delta = header_resp.drag_delta();
-            if delta.length_sq() > 0.0 {
-                if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
-                    let new_pos = outer.min + delta;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(new_pos));
-                }
-            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
         // Sotto-ui per i pulsanti interattivi a destra
@@ -456,6 +451,14 @@ impl SocialCountApp {
                 close_color,
             );
             if close_resp.clicked() {
+                if !self.is_compact {
+                    let current_size = ctx.screen_rect().size();
+                    self.config.window_width = current_size.x;
+                    self.config.window_height = current_size.y;
+                }
+                self.config.compact_mode = self.is_compact;
+                self.config.card_opacity = self.card_opacity;
+                let _ = self.config.save();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
 
@@ -493,8 +496,13 @@ impl SocialCountApp {
                 ui.spacing_mut().slider_width = 70.0_f32;
                 let slider = egui::Slider::new(&mut self.card_opacity, 0..=255)
                     .show_value(false);
-                ui.add(slider)
+                let slider_resp = ui.add(slider)
                     .on_hover_text(format!("Trasparenza sfondo: {}%", op_percent));
+
+                if slider_resp.drag_stopped() || (slider_resp.changed() && !slider_resp.dragged()) {
+                    self.config.card_opacity = self.card_opacity;
+                    let _ = self.config.save();
+                }
 
                 ui.label(
                     egui::RichText::new("🌓")
@@ -525,13 +533,7 @@ impl SocialCountApp {
             self.toggle_compact(ctx);
         }
         if header_resp.dragged_by(egui::PointerButton::Primary) {
-            let delta = header_resp.drag_delta();
-            if delta.length_sq() > 0.0 {
-                if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
-                    let new_pos = outer.min + delta;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(new_pos));
-                }
-            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
         // Pillola centrale minimale per il trascinamento
@@ -567,6 +569,9 @@ impl SocialCountApp {
                 close_color,
             );
             if close_resp.clicked() {
+                self.config.compact_mode = self.is_compact;
+                self.config.card_opacity = self.card_opacity;
+                let _ = self.config.save();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
@@ -614,9 +619,16 @@ impl SocialCountApp {
         let east_resp = ui.interact(east_rect, egui::Id::new("resize_east"), egui::Sense::click_and_drag());
         let south_resp = ui.interact(south_rect, egui::Id::new("resize_south"), egui::Sense::click_and_drag());
 
+        let min_w = if self.is_compact { 175.0_f32 } else { 280.0_f32 };
+        let min_h = if self.is_compact { 50.0_f32 } else { 160.0_f32 };
+        let max_w = 1200.0_f32;
+        let max_h = 1600.0_f32;
+
         // Inizio trascinamento: catturiamo la dimensione iniziale e la posizione iniziale del cursore
         if se_resp.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(min_w, min_h)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(Vec2::new(max_w, max_h)));
                 self.resize_drag = Some(ResizeDragState {
                     mode: ResizeMode::SouthEast,
                     start_window_size: ctx.screen_rect().size(),
@@ -625,6 +637,8 @@ impl SocialCountApp {
             }
         } else if east_resp.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(min_w, min_h)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(Vec2::new(max_w, max_h)));
                 self.resize_drag = Some(ResizeDragState {
                     mode: ResizeMode::East,
                     start_window_size: ctx.screen_rect().size(),
@@ -633,6 +647,8 @@ impl SocialCountApp {
             }
         } else if south_resp.drag_started_by(egui::PointerButton::Primary) {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(min_w, min_h)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(Vec2::new(max_w, max_h)));
                 self.resize_drag = Some(ResizeDragState {
                     mode: ResizeMode::South,
                     start_window_size: ctx.screen_rect().size(),
@@ -644,14 +660,20 @@ impl SocialCountApp {
         // Gestione del ridimensionamento continuo deterministico
         let pointer_down = ui.input(|i| i.pointer.primary_down());
         if !pointer_down {
-            self.resize_drag = None;
+            if let Some(_drag_state) = self.resize_drag.take() {
+                let current_size = ctx.screen_rect().size();
+                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(current_size));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(current_size));
+                if !self.is_compact {
+                    self.config.window_width = current_size.x;
+                    self.config.window_height = current_size.y;
+                    self.pre_compact_size = Some(current_size);
+                    let _ = self.config.save();
+                }
+            }
         } else if let Some(drag_state) = self.resize_drag {
             if let Some(curr_pos) = ui.input(|i| i.pointer.latest_pos()) {
                 let diff = curr_pos - drag_state.start_pointer_pos;
-                let min_w = if self.is_compact { 175.0_f32 } else { 280.0_f32 };
-                let min_h = if self.is_compact { 50.0_f32 } else { 160.0_f32 };
-                let max_w = 1200.0_f32;
-                let max_h = 1600.0_f32;
 
                 let (new_w, new_h) = match drag_state.mode {
                     ResizeMode::SouthEast => (

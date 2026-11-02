@@ -7,5 +7,12 @@ channels = [
 # Intervallo di aggiornamento automatico in secondi (default: 300 = 5 minuti)
 refresh_interval_secs = 300
 
-# Trasparenza dello sfondo delle card (0 = completamente trasparente, 255 = opaco, default: 190)
+# Trasparenza dello sfondo (0 = completamente trasparente, 255 = opaco, default: 190)
 card_opacity = 190
+
+# Modalita compatta (true = widget compatto, false = vista completa)
+compact_mode = false
+
+# Dimensioni della finestra (larghezza e altezza in pixel logici)
+window_width = 360.0
+window_height = 440.0

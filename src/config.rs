@@ -18,6 +18,15 @@ pub struct Config {
 
     #[serde(default = "default_card_opacity")]
     pub card_opacity: u8,
+
+    #[serde(default = "default_compact_mode")]
+    pub compact_mode: bool,
+
+    #[serde(default = "default_window_width")]
+    pub window_width: f32,
+
+    #[serde(default = "default_window_height")]
+    pub window_height: f32,
 }
 
 fn default_channels() -> Vec<String> {
@@ -32,31 +41,83 @@ fn default_card_opacity() -> u8 {
     190
 }
 
+fn default_compact_mode() -> bool {
+    false
+}
+
+fn default_window_width() -> f32 {
+    360.0
+}
+
+fn default_window_height() -> f32 {
+    440.0
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             channels: default_channels(),
             refresh_interval_secs: default_refresh_interval(),
             card_opacity: default_card_opacity(),
+            compact_mode: default_compact_mode(),
+            window_width: default_window_width(),
+            window_height: default_window_height(),
         }
     }
 }
 
 impl Config {
+    pub fn save(&self) -> Result<(), std::io::Error> {
+        let path = Path::new(CONFIG_FILENAME);
+        let channels_formatted = self
+            .channels
+            .iter()
+            .map(|c| format!("    \"{}\"", c))
+            .collect::<Vec<_>>()
+            .join(",\n");
+
+        let content = format!(
+r#"# File di configurazione SocialCount
+# Elenco dei canali YouTube da monitorare
+channels = [
+{channels_formatted}
+]
+
+# Intervallo di aggiornamento automatico in secondi (default: 300 = 5 minuti)
+refresh_interval_secs = {refresh}
+
+# Trasparenza dello sfondo (0 = completamente trasparente, 255 = opaco, default: 190)
+card_opacity = {opacity}
+
+# Modalita compatta (true = widget compatto, false = vista completa)
+compact_mode = {compact}
+
+# Dimensioni della finestra (larghezza e altezza in pixel logici)
+window_width = {width:.1}
+window_height = {height:.1}
+"#,
+            channels_formatted = channels_formatted,
+            refresh = self.refresh_interval_secs,
+            opacity = self.card_opacity,
+            compact = self.compact_mode,
+            width = self.window_width.max(200.0),
+            height = self.window_height.max(50.0),
+        );
+        fs::write(path, content)
+    }
+
     pub fn load_or_create() -> Self {
         let path = Path::new(CONFIG_FILENAME);
         if !path.exists() {
             let default_cfg = Config::default();
-            if let Ok(content) = toml::to_string_pretty(&default_cfg) {
-                let _ = fs::write(path, content);
-            }
+            let _ = default_cfg.save();
             return default_cfg;
         }
 
         match fs::read_to_string(path) {
             Ok(content) => match toml::from_str::<Config>(&content) {
                 Ok(mut cfg) => {
-                    // Normalize handles
+                    // Normalizza gli handle
                     cfg.channels = cfg
                         .channels
                         .into_iter()
@@ -70,6 +131,12 @@ impl Config {
                         })
                         .filter(|ch| !ch.is_empty())
                         .collect();
+                    if cfg.window_width < 200.0 {
+                        cfg.window_width = 360.0;
+                    }
+                    if cfg.window_height < 50.0 {
+                        cfg.window_height = 440.0;
+                    }
                     cfg
                 }
                 Err(err) => {
