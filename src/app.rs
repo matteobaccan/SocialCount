@@ -16,6 +16,198 @@ enum WorkerMessage {
     RefreshFinished,
 }
 
+#[cfg(windows)]
+mod win32_drag {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicIsize, Ordering};
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Point {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct Rect {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        pub fn GetCursorPos(lpPoint: *mut Point) -> i32;
+        pub fn GetActiveWindow() -> isize;
+        pub fn GetWindowRect(hWnd: isize, lpRect: *mut Rect) -> i32;
+        pub fn SetWindowPos(
+            hWnd: isize,
+            hWndInsertAfter: isize,
+            X: i32,
+            Y: i32,
+            cx: i32,
+            cy: i32,
+            uFlags: u32,
+        ) -> i32;
+        pub fn GetAsyncKeyState(vKey: i32) -> i16;
+        pub fn GetWindowLongW(hWnd: isize, nIndex: i32) -> i32;
+        pub fn SetWindowLongW(hWnd: isize, nIndex: i32, dwNewLong: i32) -> i32;
+        pub fn GetWindowLongPtrW(hWnd: isize, nIndex: i32) -> isize;
+        pub fn SetWindowLongPtrW(hWnd: isize, nIndex: i32, dwNewLong: isize) -> isize;
+        pub fn CallWindowProcW(
+            lpPrevWndFunc: isize,
+            hWnd: isize,
+            Msg: u32,
+            wParam: usize,
+            lParam: isize,
+        ) -> isize;
+        pub fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
+    }
+
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        pub fn DwmSetWindowAttribute(
+            hwnd: isize,
+            dwAttribute: u32,
+            pvAttribute: *const c_void,
+            cbAttribute: u32,
+        ) -> i32;
+    }
+
+    pub const VK_LBUTTON: i32 = 0x01;
+    pub const SWP_NOSIZE: u32 = 0x0001;
+    pub const SWP_NOZORDER: u32 = 0x0004;
+    pub const SWP_NOACTIVATE: u32 = 0x0010;
+    pub const SWP_FRAMECHANGED: u32 = 0x0020;
+
+    const GWLP_WNDPROC: i32 = -4;
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+    const WM_NCCALCSIZE: u32 = 0x0083;
+    const WM_NCPAINT: u32 = 0x0085;
+
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_CAPTION: u32 = 0x00C0_0000;
+    const WS_BORDER: u32 = 0x0080_0000;
+    const WS_DLGFRAME: u32 = 0x0040_0000;
+    const WS_THICKFRAME: u32 = 0x0004_0000;
+    const WS_EX_DLGMODALFRAME: u32 = 0x0000_0001;
+    const WS_EX_WINDOWEDGE: u32 = 0x0000_0100;
+    const WS_EX_CLIENTEDGE: u32 = 0x0000_0200;
+    const WS_EX_STATICEDGE: u32 = 0x0002_0000;
+
+    const DWMWA_NCRENDERING_POLICY: u32 = 2;
+    const DWMNCRP_DISABLED: u32 = 1;
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_DONOTROUND: u32 = 1;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
+
+    static OLD_WNDPROC: AtomicIsize = AtomicIsize::new(0);
+
+    unsafe extern "system" fn wndproc_senza_bordo(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
+        if msg == WM_NCCALCSIZE || msg == WM_NCPAINT {
+            return 0;
+        }
+        let old = OLD_WNDPROC.load(Ordering::Relaxed);
+        if old != 0 {
+            unsafe { CallWindowProcW(old, hwnd, msg, wparam, lparam) }
+        } else {
+            0
+        }
+    }
+
+    pub fn rimuovi_bordo_finestra(hwnd: isize) {
+        if hwnd == 0 {
+            return;
+        }
+        unsafe {
+            let nostra_proc = wndproc_senza_bordo as *const () as isize;
+            let prev = GetWindowLongPtrW(hwnd, GWLP_WNDPROC);
+            let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+            let ha_bordo_style = (style & (WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0
+                || (style & WS_POPUP) == 0;
+
+            if prev == nostra_proc && !ha_bordo_style {
+                return;
+            }
+
+            let mut rect = Rect::default();
+            let ha_rect = GetWindowRect(hwnd, &mut rect) != 0;
+
+            if prev != 0 && prev != nostra_proc {
+                OLD_WNDPROC.store(prev, Ordering::Relaxed);
+                SetWindowLongPtrW(hwnd, GWLP_WNDPROC, nostra_proc);
+            }
+
+            let ncrp: u32 = DWMNCRP_DISABLED;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_NCRENDERING_POLICY,
+                (&ncrp as *const u32).cast::<c_void>(),
+                std::mem::size_of::<u32>() as u32,
+            );
+            let corner: u32 = DWMWCP_DONOTROUND;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&corner as *const u32).cast::<c_void>(),
+                std::mem::size_of::<u32>() as u32,
+            );
+            let border_none: u32 = DWMWA_COLOR_NONE;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                (&border_none as *const u32).cast::<c_void>(),
+                std::mem::size_of::<u32>() as u32,
+            );
+
+            let nuovo_style = (style
+                & !(WS_CAPTION | WS_BORDER | WS_DLGFRAME | WS_THICKFRAME))
+                | WS_POPUP;
+            SetWindowLongW(hwnd, GWL_STYLE, nuovo_style as i32);
+
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            let nuovo_ex = ex_style
+                & !(WS_EX_DLGMODALFRAME
+                    | WS_EX_WINDOWEDGE
+                    | WS_EX_CLIENTEDGE
+                    | WS_EX_STATICEDGE);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, nuovo_ex as i32);
+
+            if ha_rect {
+                SetWindowPos(
+                    hwnd,
+                    0,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct TrascinamentoWin32 {
+    hwnd: isize,
+    offset_cx: i32,
+    offset_cy: i32,
+    start_x: i32,
+    start_y: i32,
+    mosso: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResizeMode {
     SouthEast,
@@ -48,6 +240,12 @@ pub struct SocialCountApp {
     editing_channel_idx: Option<usize>,
     editing_channel_input: String,
     profile_error_msg: Option<String>,
+    #[cfg(windows)]
+    hwnd_principale: isize,
+    #[cfg(windows)]
+    bordo_rimosso: bool,
+    #[cfg(windows)]
+    trascinamento: Option<TrascinamentoWin32>,
 }
 
 impl SocialCountApp {
@@ -92,6 +290,12 @@ impl SocialCountApp {
             editing_channel_idx: None,
             editing_channel_input: String::new(),
             profile_error_msg: None,
+            #[cfg(windows)]
+            hwnd_principale: 0,
+            #[cfg(windows)]
+            bordo_rimosso: false,
+            #[cfg(windows)]
+            trascinamento: None,
         };
 
         app.trigger_refresh();
@@ -278,6 +482,11 @@ impl eframe::App for SocialCountApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(windows)]
+        self.aggiorna_hwnd_e_bordo_win32();
+        #[cfg(windows)]
+        self.aggiorna_trascinamento_win32(ctx);
+
         self.update_textures(ctx);
 
         let interval = Duration::from_secs(self.config.refresh_interval_secs.max(30));
@@ -463,7 +672,10 @@ impl SocialCountApp {
         if header_resp.double_clicked() {
             self.toggle_compact(ctx);
         }
-        if header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+            #[cfg(windows)]
+            self.avvia_trascinamento_win32();
+            #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
@@ -609,7 +821,10 @@ impl SocialCountApp {
         if header_resp.double_clicked() {
             self.toggle_compact(ctx);
         }
-        if header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+            #[cfg(windows)]
+            self.avvia_trascinamento_win32();
+            #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
@@ -1145,7 +1360,10 @@ impl SocialCountApp {
         if header_resp.dragged() {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
         }
-        if header_resp.dragged_by(egui::PointerButton::Primary) {
+        if header_resp.drag_started_by(egui::PointerButton::Primary) || header_resp.dragged_by(egui::PointerButton::Primary) {
+            #[cfg(windows)]
+            self.avvia_trascinamento_win32();
+            #[cfg(not(windows))]
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
@@ -1455,5 +1673,99 @@ impl SocialCountApp {
                 }
             });
         });
+    }
+
+    #[cfg(windows)]
+    fn aggiorna_hwnd_e_bordo_win32(&mut self) {
+        if self.hwnd_principale == 0 {
+            let hwnd_attivo = unsafe { win32_drag::GetActiveWindow() };
+            if hwnd_attivo != 0 {
+                self.hwnd_principale = hwnd_attivo;
+            } else {
+                let mut wide: Vec<u16> = "SocialCount - YouTube Channels".encode_utf16().collect();
+                wide.push(0);
+                let found = unsafe { win32_drag::FindWindowW(std::ptr::null(), wide.as_ptr()) };
+                if found != 0 {
+                    self.hwnd_principale = found;
+                }
+            }
+        }
+        if self.hwnd_principale != 0 && !self.bordo_rimosso {
+            win32_drag::rimuovi_bordo_finestra(self.hwnd_principale);
+            self.bordo_rimosso = true;
+        }
+    }
+
+    #[cfg(windows)]
+    fn avvia_trascinamento_win32(&mut self) {
+        if self.hwnd_principale == 0 {
+            self.aggiorna_hwnd_e_bordo_win32();
+        }
+        if self.hwnd_principale != 0 && self.trascinamento.is_none() {
+            let hwnd = self.hwnd_principale;
+            let mut cur = win32_drag::Point::default();
+            let mut rect = win32_drag::Rect::default();
+            unsafe {
+                if win32_drag::GetCursorPos(&mut cur) != 0
+                    && win32_drag::GetWindowRect(hwnd, &mut rect) != 0
+                {
+                    let cx = (rect.left + rect.right) / 2;
+                    let cy = (rect.top + rect.bottom) / 2;
+                    self.trascinamento = Some(TrascinamentoWin32 {
+                        hwnd,
+                        offset_cx: cur.x - cx,
+                        offset_cy: cur.y - cy,
+                        start_x: cur.x,
+                        start_y: cur.y,
+                        mosso: false,
+                    });
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn aggiorna_trascinamento_win32(&mut self, ctx: &egui::Context) {
+        if let Some(mut tr) = self.trascinamento {
+            let giu = unsafe {
+                (win32_drag::GetAsyncKeyState(win32_drag::VK_LBUTTON) as u16 & 0x8000) != 0
+            };
+            if !giu {
+                self.trascinamento = None;
+            } else {
+                let mut cur = win32_drag::Point::default();
+                let mut rect = win32_drag::Rect::default();
+                unsafe {
+                    if win32_drag::GetCursorPos(&mut cur) != 0
+                        && win32_drag::GetWindowRect(tr.hwnd, &mut rect) != 0
+                    {
+                        if (cur.x - tr.start_x).abs() > 2 || (cur.y - tr.start_y).abs() > 2 {
+                            tr.mosso = true;
+                        }
+                        if tr.mosso {
+                            let w = rect.right - rect.left;
+                            let h = rect.bottom - rect.top;
+                            let nuovo_cx = cur.x - tr.offset_cx;
+                            let nuovo_cy = cur.y - tr.offset_cy;
+                            let x = nuovo_cx - w / 2;
+                            let y = nuovo_cy - h / 2;
+                            win32_drag::SetWindowPos(
+                                tr.hwnd,
+                                0,
+                                x,
+                                y,
+                                0,
+                                0,
+                                win32_drag::SWP_NOSIZE
+                                    | win32_drag::SWP_NOZORDER
+                                    | win32_drag::SWP_NOACTIVATE,
+                            );
+                        }
+                    }
+                }
+                self.trascinamento = Some(tr);
+                ctx.request_repaint();
+            }
+        }
     }
 }
