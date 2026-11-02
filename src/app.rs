@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 enum WorkerMessage {
-    ChannelUpdated(ChannelData),
+    ChannelUpdated(Box<ChannelData>),
     RefreshFinished,
 }
 
@@ -356,7 +356,7 @@ impl SocialCountApp {
 
             for handle in handles {
                 let data = fetcher.fetch_channel(&handle);
-                let _ = tx.send(WorkerMessage::ChannelUpdated(data));
+                let _ = tx.send(WorkerMessage::ChannelUpdated(Box::new(data)));
             }
 
             let _ = tx.send(WorkerMessage::RefreshFinished);
@@ -366,7 +366,8 @@ impl SocialCountApp {
     fn update_textures(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                WorkerMessage::ChannelUpdated(mut new_data) => {
+                WorkerMessage::ChannelUpdated(new_data_box) => {
+                    let mut new_data = *new_data_box;
                     if let Some(bytes) = &new_data.avatar_bytes {
                         if let Ok(img) = image::load_from_memory(bytes) {
                             let mut rgba = img.to_rgba8();
@@ -397,7 +398,7 @@ impl SocialCountApp {
                                 pixels.as_slice(),
                             );
                             let texture = ctx.load_texture(
-                                &format!("avatar_{}", new_data.handle),
+                                format!("avatar_{}", new_data.handle),
                                 color_image,
                                 egui::TextureOptions::LINEAR,
                             );
@@ -433,7 +434,7 @@ impl SocialCountApp {
                         self.channels.push(new_data);
                     }
 
-                    self.channels.sort_by(|a, b| b.subscriber_count.cmp(&a.subscriber_count));
+                    self.channels.sort_by_key(|a| std::cmp::Reverse(a.subscriber_count));
                 }
                 WorkerMessage::RefreshFinished => {
                     self.is_loading = false;
@@ -1451,7 +1452,7 @@ impl SocialCountApp {
                         std::thread::spawn(move || {
                             let fetcher = std::sync::Arc::new(YouTubeFetcher::new());
                             let data = fetcher.fetch_channel(&h);
-                            let _ = tx.send(WorkerMessage::ChannelUpdated(data));
+                            let _ = tx.send(WorkerMessage::ChannelUpdated(Box::new(data)));
                         });
                     }
                 }
@@ -1581,17 +1582,17 @@ impl SocialCountApp {
                                             }
 
                                             // Sposta giù (U - Reorder)
-                                            if idx + 1 < self.config.channels.len() {
-                                                if ui.small_button("▼").on_hover_text("Sposta giù").clicked() {
-                                                    to_move_down_idx = Some(idx);
-                                                }
+                                            if idx + 1 < self.config.channels.len()
+                                                && ui.small_button("▼").on_hover_text("Sposta giù").clicked()
+                                            {
+                                                to_move_down_idx = Some(idx);
                                             }
 
                                             // Sposta su (U - Reorder)
-                                            if idx > 0 {
-                                                if ui.small_button("▲").on_hover_text("Sposta su").clicked() {
-                                                    to_move_up_idx = Some(idx);
-                                                }
+                                            if idx > 0
+                                                && ui.small_button("▲").on_hover_text("Sposta su").clicked()
+                                            {
+                                                to_move_up_idx = Some(idx);
                                             }
                                         });
                                     });
@@ -1625,7 +1626,7 @@ impl SocialCountApp {
                 std::thread::spawn(move || {
                     let fetcher = std::sync::Arc::new(YouTubeFetcher::new());
                     let data = fetcher.fetch_channel(&h);
-                    let _ = tx.send(WorkerMessage::ChannelUpdated(data));
+                    let _ = tx.send(WorkerMessage::ChannelUpdated(Box::new(data)));
                 });
             }
         }

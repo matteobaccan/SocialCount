@@ -307,16 +307,10 @@ pub fn parse_subscriber_count(text: &str) -> u64 {
     // Determine multiplier (order matters to avoid 'm' matching 'mila')
     let multiplier: f64 = if lower.contains("mrd") || lower.contains("miliard") || lower.contains("billion") {
         1_000_000_000.0
-    } else if lower.contains("mln") || lower.contains("milion") || lower.contains("million") {
-        1_000_000.0
-    } else if lower.contains("mila") || lower.contains("thousand") {
+    } else if lower.contains("mila") || lower.contains("thousand") || lower.contains('k') {
         1_000.0
-    } else if lower.contains('k') {
-        1_000.0
-    } else if lower.contains('m') {
+    } else if lower.contains("mln") || lower.contains("milion") || lower.contains("million") || lower.contains('m') {
         1_000_000.0
-    } else if lower.contains('b') {
-        1_000_000_000.0
     } else {
         1.0
     };
