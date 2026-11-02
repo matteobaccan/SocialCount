@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 eframe = { version = "0.29", default-features = false, features = ["default", "glow", "wayland", "x11"] }
-egui = "0.29"
+egui = "0.37"
 egui_extras = { version = "0.29", features = ["all_loaders", "image"] }
 image = { version = "0.25", features = ["png", "jpeg", "webp"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
