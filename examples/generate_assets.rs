@@ -348,7 +348,7 @@ fn draw_text_centered(
 }
 
 /// Generates square logo for repo and app icon
-fn generate_logo(path: &Path, fonts: &Fonts) {
+fn generate_logo(path: &Path, fonts: &Fonts) -> RgbaImage {
     let size = 512;
     let mut img: RgbaImage = ImageBuffer::new(size, size);
     let cx = size as f32 / 2.0;
@@ -447,6 +447,36 @@ fn generate_logo(path: &Path, fonts: &Fonts) {
     );
 
     img.save(path).expect("Failed to save logo");
+    println!("Saved: {}", path.display());
+    img
+}
+
+/// Generates multi-resolution Windows icon (.ico) file
+fn generate_icon(path: &Path, logo: &RgbaImage) {
+    use image::codecs::ico::{IcoEncoder, IcoFrame};
+    use image::imageops::FilterType;
+    use image::ExtendedColorType;
+    use std::fs::File;
+
+    let sizes: [u32; 6] = [16, 32, 48, 64, 128, 256];
+    let mut frames = Vec::new();
+    let mut resized_images = Vec::new();
+
+    for &s in &sizes {
+        let resized = image::imageops::resize(logo, s, s, FilterType::Lanczos3);
+        resized_images.push(resized);
+    }
+
+    for (i, &s) in sizes.iter().enumerate() {
+        let frame = IcoFrame::as_png(resized_images[i].as_raw(), s, s, ExtendedColorType::Rgba8)
+            .expect("Failed to create IcoFrame");
+        frames.push(frame);
+    }
+
+    let file = File::create(path).expect("Failed to create icon file");
+    IcoEncoder::new(file)
+        .encode_images(&frames)
+        .expect("Failed to encode ICO");
     println!("Saved: {}", path.display());
 }
 
@@ -2652,10 +2682,19 @@ fn main() {
     let regular = FontRef::try_from_slice(&reg_data).expect("Invalid regular font");
     let fonts = Fonts { bold, regular };
 
-    generate_logo(&assets_dir.join("logo.png"), &fonts);
+    let logo = generate_logo(&assets_dir.join("logo.png"), &fonts);
+    generate_icon(&assets_dir.join("icon.ico"), &logo);
     generate_normal_screenshot(&assets_dir.join("screenshot-normal.png"), &fonts);
     generate_compact_screenshot(&assets_dir.join("screenshot-compact.png"), &fonts);
     generate_banner(&assets_dir.join("socialcount-banner.png"), &fonts);
+
+    let docs_assets_dir = Path::new("docs").join("assets");
+    if docs_assets_dir.exists() {
+        let _ = fs::copy(
+            assets_dir.join("icon.ico"),
+            docs_assets_dir.join("icon.ico"),
+        );
+    }
 
     println!("All assets successfully generated with typography and delta indicators!");
 }
