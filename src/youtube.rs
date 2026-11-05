@@ -19,6 +19,9 @@ pub struct ChannelData {
     pub initial_video_count: Option<u64>,
     pub total_comments: u64,
     pub initial_total_comments: Option<u64>,
+    pub total_likes: u64,
+    pub initial_total_likes: Option<u64>,
+    pub latest_comment: Option<crate::db::LatestCommentInfo>,
     pub channel_id: Option<String>,
     pub uploads_playlist_id: Option<String>,
     pub video_count_text: String,
@@ -30,10 +33,12 @@ pub struct ChannelData {
     pub views_changed: bool,
     pub video_changed: bool,
     pub comments_changed: bool,
+    pub likes_changed: bool,
     pub sub_changed_at: Option<std::time::Instant>,
     pub views_changed_at: Option<std::time::Instant>,
     pub video_changed_at: Option<std::time::Instant>,
     pub comments_changed_at: Option<std::time::Instant>,
+    pub likes_changed_at: Option<std::time::Instant>,
 }
 
 impl ChannelData {
@@ -51,6 +56,9 @@ impl ChannelData {
             initial_video_count: None,
             total_comments: 0,
             initial_total_comments: None,
+            total_likes: 0,
+            initial_total_likes: None,
+            latest_comment: None,
             channel_id: None,
             uploads_playlist_id: None,
             video_count_text: "-".to_string(),
@@ -62,10 +70,12 @@ impl ChannelData {
             views_changed: false,
             video_changed: false,
             comments_changed: false,
+            likes_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
             video_changed_at: None,
             comments_changed_at: None,
+            likes_changed_at: None,
         }
     }
 
@@ -95,6 +105,14 @@ impl ChannelData {
     pub fn delta_comments(&self) -> i64 {
         match self.initial_total_comments {
             Some(init) => self.total_comments as i64 - init as i64,
+            None => 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn delta_likes(&self) -> i64 {
+        match self.initial_total_likes {
+            Some(init) => self.total_likes as i64 - init as i64,
             None => 0,
         }
     }
@@ -253,6 +271,8 @@ impl YouTubeFetcher {
         let video_count_text = format!("{} videos", video_count);
 
         let mut total_comments = 0;
+        let mut total_likes = 0;
+        let mut latest_comment = None;
         if let Ok(db) = crate::db::Database::open() {
             let _ = db.upsert_channel(
                 &channel_id,
@@ -271,6 +291,12 @@ impl YouTubeFetcher {
             if let Ok(comments) = db.get_channel_total_comments(&channel_id) {
                 total_comments = comments;
             }
+            if let Ok(likes) = db.get_channel_total_likes(&channel_id) {
+                total_likes = likes;
+            }
+            if let Ok(lc) = db.get_channel_latest_comment(&channel_id) {
+                latest_comment = lc;
+            }
         }
 
         Ok(ChannelData {
@@ -286,6 +312,9 @@ impl YouTubeFetcher {
             initial_video_count: None,
             total_comments,
             initial_total_comments: None,
+            total_likes,
+            initial_total_likes: None,
+            latest_comment,
             channel_id: Some(channel_id),
             uploads_playlist_id: Some(uploads_playlist_id),
             video_count_text,
@@ -297,10 +326,12 @@ impl YouTubeFetcher {
             views_changed: false,
             video_changed: false,
             comments_changed: false,
+            likes_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
             video_changed_at: None,
             comments_changed_at: None,
+            likes_changed_at: None,
         })
     }
 
@@ -424,6 +455,14 @@ impl YouTubeFetcher {
                                         .as_ref()
                                         .map(|v| v.last_comment_count_checked)
                                         .unwrap_or(0);
+                                    let mut last_comment_author = cached
+                                        .as_ref()
+                                        .map(|v| v.last_comment_author.clone())
+                                        .unwrap_or_default();
+                                    let mut last_comment_text = cached
+                                        .as_ref()
+                                        .map(|v| v.last_comment_text.clone())
+                                        .unwrap_or_default();
 
                                     // Only query commentThreads if comments > 0 and count changed or timestamp is missing
                                     if comments > 0
@@ -440,14 +479,33 @@ impl YouTubeFetcher {
                                                     if let Ok(c_json) =
                                                         serde_json::from_str::<Value>(&c_text)
                                                     {
-                                                        if let Some(c_date) = c_json
-                                                            .pointer(
-                                                                "/items/0/snippet/topLevelComment/snippet/publishedAt",
-                                                            )
-                                                            .and_then(|v| v.as_str())
-                                                        {
-                                                            last_comment_at =
-                                                                parse_iso8601_to_unix(c_date);
+                                                        if let Some(snippet) = c_json.pointer(
+                                                            "/items/0/snippet/topLevelComment/snippet",
+                                                        ) {
+                                                            if let Some(c_date) = snippet
+                                                                .pointer("/publishedAt")
+                                                                .and_then(|v| v.as_str())
+                                                            {
+                                                                last_comment_at =
+                                                                    parse_iso8601_to_unix(c_date);
+                                                            }
+                                                            if let Some(author) = snippet
+                                                                .pointer("/authorDisplayName")
+                                                                .and_then(|v| v.as_str())
+                                                            {
+                                                                last_comment_author =
+                                                                    author.to_string();
+                                                            }
+                                                            if let Some(text) = snippet
+                                                                .pointer("/textOriginal")
+                                                                .or_else(|| {
+                                                                    snippet.pointer("/textDisplay")
+                                                                })
+                                                                .and_then(|v| v.as_str())
+                                                            {
+                                                                last_comment_text =
+                                                                    text.to_string();
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -457,6 +515,8 @@ impl YouTubeFetcher {
                                     } else if comments == 0 {
                                         last_comment_at = 0;
                                         last_comment_count_checked = 0;
+                                        last_comment_author.clear();
+                                        last_comment_text.clear();
                                     }
 
                                     if !vid.is_empty() {
@@ -471,6 +531,8 @@ impl YouTubeFetcher {
                                             is_short,
                                             last_comment_at,
                                             last_comment_count_checked,
+                                            &last_comment_author,
+                                            &last_comment_text,
                                         );
                                     }
                                 }
@@ -652,6 +714,8 @@ impl YouTubeFetcher {
             .map(|s| s.to_string());
 
         let mut total_comments = 0;
+        let mut total_likes = 0;
+        let mut latest_comment = None;
         if let Some(cid) = &channel_id {
             if let Ok(db) = crate::db::Database::open() {
                 let _ = db.upsert_channel(
@@ -665,6 +729,12 @@ impl YouTubeFetcher {
                 );
                 if let Ok(comments) = db.get_channel_total_comments(cid) {
                     total_comments = comments;
+                }
+                if let Ok(likes) = db.get_channel_total_likes(cid) {
+                    total_likes = likes;
+                }
+                if let Ok(lc) = db.get_channel_latest_comment(cid) {
+                    latest_comment = lc;
                 }
             }
         }
@@ -682,6 +752,9 @@ impl YouTubeFetcher {
             initial_video_count: None,
             total_comments,
             initial_total_comments: None,
+            total_likes,
+            initial_total_likes: None,
+            latest_comment,
             channel_id,
             uploads_playlist_id: None,
             video_count_text,
@@ -693,10 +766,12 @@ impl YouTubeFetcher {
             views_changed: false,
             video_changed: false,
             comments_changed: false,
+            likes_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
             video_changed_at: None,
             comments_changed_at: None,
+            likes_changed_at: None,
         })
     }
 }
@@ -975,6 +1050,11 @@ mod tests {
         ch.views_count = 2150;
         assert_eq!(ch.delta_views(), 150);
         assert_eq!(format_compact_delta(ch.delta_views()), "+150");
+
+        ch.initial_total_likes = Some(500);
+        ch.total_likes = 525;
+        assert_eq!(ch.delta_likes(), 25);
+        assert_eq!(format_compact_delta(ch.delta_likes()), "+25");
 
         assert_eq!(format_compact_delta(0), "");
         assert_eq!(format_compact_delta(15000), "+15.0K");

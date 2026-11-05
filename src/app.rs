@@ -257,6 +257,7 @@ pub struct SocialCountApp {
     selected_channel_details: Option<String>,
     video_sort_column: VideoSortColumn,
     video_sort_direction: SortDirection,
+    export_notification: Option<(String, Instant)>,
     #[cfg(windows)]
     main_hwnd: isize,
     #[cfg(windows)]
@@ -306,6 +307,10 @@ impl SocialCountApp {
                         data.total_comments = comments;
                         data.initial_total_comments = Some(comments);
                     }
+                    if let Ok(likes) = db.get_channel_total_likes(&cached.channel_id) {
+                        data.total_likes = likes;
+                        data.initial_total_likes = Some(likes);
+                    }
                 }
             }
             initial_channels.push(data);
@@ -340,6 +345,7 @@ impl SocialCountApp {
             selected_channel_details: None,
             video_sort_column: VideoSortColumn::Age,
             video_sort_direction: SortDirection::Descending,
+            export_notification: None,
             #[cfg(windows)]
             main_hwnd: 0,
             #[cfg(windows)]
@@ -477,6 +483,7 @@ impl SocialCountApp {
                         new_data.initial_views_count = old.initial_views_count;
                         new_data.initial_video_count = old.initial_video_count;
                         new_data.initial_total_comments = old.initial_total_comments;
+                        new_data.initial_total_likes = old.initial_total_likes;
 
                         // Set initial baseline if not yet recorded and current value > 0
                         if new_data.initial_subscriber_count.is_none()
@@ -493,6 +500,9 @@ impl SocialCountApp {
                         if new_data.initial_total_comments.is_none() && new_data.total_comments > 0
                         {
                             new_data.initial_total_comments = Some(new_data.total_comments);
+                        }
+                        if new_data.initial_total_likes.is_none() && new_data.total_likes > 0 {
+                            new_data.initial_total_likes = Some(new_data.total_likes);
                         }
 
                         // Preserve avatar and title if new fetch failed or lacked image
@@ -512,6 +522,9 @@ impl SocialCountApp {
                             && old.uploads_playlist_id.is_some()
                         {
                             new_data.uploads_playlist_id = old.uploads_playlist_id.clone();
+                        }
+                        if new_data.latest_comment.is_none() && old.latest_comment.is_some() {
+                            new_data.latest_comment = old.latest_comment.clone();
                         }
 
                         // Detect if subscriber count changed compared to previously known valid value
@@ -576,6 +589,18 @@ impl SocialCountApp {
                             new_data.comments_changed_at = old.comments_changed_at;
                         }
 
+                        // Detect if likes count changed compared to previous value
+                        if old.total_likes > 0
+                            && new_data.total_likes > 0
+                            && new_data.total_likes != old.total_likes
+                        {
+                            new_data.likes_changed = true;
+                            new_data.likes_changed_at = Some(Instant::now());
+                        } else {
+                            new_data.likes_changed = old.likes_changed;
+                            new_data.likes_changed_at = old.likes_changed_at;
+                        }
+
                         self.channels[pos] = new_data;
                     } else {
                         if new_data.initial_subscriber_count.is_none()
@@ -592,6 +617,9 @@ impl SocialCountApp {
                         if new_data.initial_total_comments.is_none() && new_data.total_comments > 0
                         {
                             new_data.initial_total_comments = Some(new_data.total_comments);
+                        }
+                        if new_data.initial_total_likes.is_none() && new_data.total_likes > 0 {
+                            new_data.initial_total_likes = Some(new_data.total_likes);
                         }
                         self.channels.push(new_data);
                     }
@@ -1575,515 +1603,46 @@ impl SocialCountApp {
 
                     ui.add_space(6.0);
 
-                    // Counter pills: Equal width, responsive to window width, always solid & opaque
+                    // Counter pills: Responsive to window width, customizable visibility
                     let avail_w = ui.available_width();
                     let gap = 8.0_f32;
-                    let box_w = ((avail_w - gap) / 2.0_f32).max(70.0_f32);
                     let box_h = 28.0_f32;
-                    let box_size = Vec2::new(box_w, box_h);
 
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
+                    let mut visible_metrics = Vec::new();
+                    if self.config.show_subscribers {
+                        visible_metrics.push(CardMetric::Subscribers);
+                    }
+                    if self.config.show_views {
+                        visible_metrics.push(CardMetric::Views);
+                    }
+                    if self.config.show_videos {
+                        visible_metrics.push(CardMetric::Videos);
+                    }
+                    if self.config.show_comments {
+                        visible_metrics.push(CardMetric::Comments);
+                    }
+                    if self.config.show_likes {
+                        visible_metrics.push(CardMetric::Likes);
+                    }
 
-                        // Users/Subscribers Box
-                        let delta_sub = channel.delta_subscribers();
-                        let sub_increased = delta_sub > 0;
-                        let sub_changed = delta_sub != 0 || channel.sub_changed;
-
-                        let (box1_rect, box1_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box1_rect,
-                            Rounding::same(8.0),
-                            Color32::from_rgb(16, 44, 28),
-                        );
-                        let stroke1_color = if sub_increased {
-                            Color32::from_rgb(239, 68, 68) // Red border when increased
-                        } else if sub_changed {
-                            Color32::from_rgb(249, 115, 22) // Orange border when decreased
-                        } else {
-                            Color32::from_rgb(52, 211, 153)
-                        };
-                        let stroke1_width = if sub_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box1_rect,
-                            Rounding::same(8.0),
-                            Stroke::new(stroke1_width, stroke1_color),
-                        );
-
-                        let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
-                        let font_id = egui::FontId::proportional(13.0);
-                        let sub_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                sub_num.clone(),
-                                font_id.clone(),
-                                Color32::from_rgb(209, 250, 229),
-                            )
-                        });
-                        let icon1_w = 14.0_f32;
-                        let item_gap = 5.0_f32;
-
-                        let delta_sub_str = crate::youtube::format_compact_delta(delta_sub);
-                        let (delta1_galley, delta1_color) =
-                            if !delta_sub_str.is_empty() {
-                                let delta_font = egui::FontId::proportional(11.0);
-                                let color = if sub_increased {
-                                    Color32::from_rgb(252, 165, 165)
-                                } else {
-                                    Color32::from_rgb(253, 186, 116)
-                                };
-                                (
-                                    Some(ui.fonts(|f| {
-                                        f.layout_no_wrap(delta_sub_str, delta_font, color)
-                                    })),
-                                    color,
-                                )
-                            } else {
-                                (None, Color32::TRANSPARENT)
-                            };
-
-                        let circle1_w = if sub_increased { 10.0_f32 } else { 0.0_f32 };
-                        let delta1_w = delta1_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total1_w =
-                            icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
-                        let start1_x = box1_rect.center().x - total1_w / 2.0;
-
-                        let icon1_rect = Rect::from_center_size(
-                            Pos2::new(start1_x + icon1_w / 2.0, box1_rect.center().y),
-                            Vec2::splat(14.0),
-                        );
-                        crate::icons::draw_user_icon(
-                            ui.painter(),
-                            icon1_rect,
-                            Color32::from_rgb(52, 211, 153),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start1_x + icon1_w + item_gap,
-                                box1_rect.center().y - sub_galley.size().y / 2.0,
-                            ),
-                            sub_galley,
-                            Color32::from_rgb(209, 250, 229),
-                        );
-
-                        let mut cur1_x =
-                            start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 5.0;
-                        if sub_increased {
-                            let circle_pos = Pos2::new(cur1_x + 3.5, box1_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                3.5,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                3.5,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur1_x += 10.0;
+                    for (row_idx, chunk) in visible_metrics.chunks(2).enumerate() {
+                        if row_idx > 0 {
+                            ui.add_space(5.0);
                         }
-
-                        if let Some(galley) = delta1_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur1_x, box1_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta1_color,
-                            );
-                        }
-
-                        let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
-                            if delta_sub != 0 {
-                                format!(
-                                    "Subscribers: {} | Since launch: {:+} (initial: {})",
-                                    sub_num, delta_sub, init
-                                )
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = gap;
+                            if chunk.len() == 2 {
+                                let box_w = ((avail_w - gap) / 2.0_f32).max(70.0_f32);
+                                let box_size = Vec2::new(box_w, box_h);
+                                render_card_metric_box(ui, box_size, chunk[0], channel);
+                                render_card_metric_box(ui, box_size, chunk[1], channel);
                             } else {
-                                format!("Subscribers: {} (no change since launch)", sub_num)
+                                let box_w = avail_w;
+                                let box_size = Vec2::new(box_w, box_h);
+                                render_card_metric_box(ui, box_size, chunk[0], channel);
                             }
-                        } else {
-                            format!("Subscribers: {}", sub_num)
-                        };
-                        box1_resp.on_hover_text(sub_tooltip);
-
-                        // Views Box
-                        let delta_views = channel.delta_views();
-                        let views_increased = delta_views > 0;
-                        let views_changed = delta_views != 0 || channel.views_changed;
-
-                        let (box2_rect, box2_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box2_rect,
-                            Rounding::same(8.0),
-                            Color32::from_rgb(18, 36, 58),
-                        );
-                        let stroke2_color = if views_increased {
-                            Color32::from_rgb(239, 68, 68) // Red border when increased
-                        } else if views_changed {
-                            Color32::from_rgb(249, 115, 22) // Orange border when decreased
-                        } else {
-                            Color32::from_rgb(96, 165, 250)
-                        };
-                        let stroke2_width = if views_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box2_rect,
-                            Rounding::same(8.0),
-                            Stroke::new(stroke2_width, stroke2_color),
-                        );
-
-                        let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                        let views_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                views_num.clone(),
-                                font_id,
-                                Color32::from_rgb(224, 242, 254),
-                            )
                         });
-                        let icon2_w = 16.0_f32;
-
-                        let delta_views_str = crate::youtube::format_compact_delta(delta_views);
-                        let (delta2_galley, delta2_color) = if !delta_views_str.is_empty() {
-                            let delta_font = egui::FontId::proportional(11.0);
-                            let color = if views_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_views_str, delta_font, color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle2_w = if views_increased { 10.0_f32 } else { 0.0_f32 };
-                        let delta2_w = delta2_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total2_w =
-                            icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
-                        let start2_x = box2_rect.center().x - total2_w / 2.0;
-
-                        let icon2_rect = Rect::from_center_size(
-                            Pos2::new(start2_x + icon2_w / 2.0, box2_rect.center().y),
-                            Vec2::new(16.0, 14.0),
-                        );
-                        crate::icons::draw_eye_icon(
-                            ui.painter(),
-                            icon2_rect,
-                            Color32::from_rgb(96, 165, 250),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start2_x + icon2_w + item_gap,
-                                box2_rect.center().y - views_galley.size().y / 2.0,
-                            ),
-                            views_galley,
-                            Color32::from_rgb(224, 242, 254),
-                        );
-
-                        let mut cur2_x =
-                            start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 5.0;
-                        if views_increased {
-                            let circle_pos = Pos2::new(cur2_x + 3.5, box2_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                3.5,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                3.5,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur2_x += 10.0;
-                        }
-
-                        if let Some(galley) = delta2_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur2_x, box2_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta2_color,
-                            );
-                        }
-
-                        let views_tooltip = if let Some(init) = channel.initial_views_count {
-                            if delta_views != 0 {
-                                format!(
-                                    "Views: {} | Since launch: {:+} (initial: {})",
-                                    views_num, delta_views, init
-                                )
-                            } else {
-                                format!("Views: {} (no change since launch)", views_num)
-                            }
-                        } else {
-                            format!("Views: {}", views_num)
-                        };
-                        box2_resp.on_hover_text(views_tooltip);
-                    });
-
-                    ui.add_space(5.0);
-
-                    // Row 2: Videos & Comments Box
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
-                        let font_id = egui::FontId::proportional(13.0);
-                        let item_gap = 5.0_f32;
-
-                        // Videos Box
-                        let delta_videos = channel.delta_video_count();
-                        let vid_increased = delta_videos > 0;
-                        let vid_changed = delta_videos != 0 || channel.video_changed;
-
-                        let (box3_rect, box3_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box3_rect,
-                            Rounding::same(8.0),
-                            Color32::from_rgb(38, 22, 54),
-                        );
-                        let stroke3_color = if vid_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if vid_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(192, 132, 252)
-                        };
-                        let stroke3_width = if vid_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box3_rect,
-                            Rounding::same(8.0),
-                            Stroke::new(stroke3_width, stroke3_color),
-                        );
-
-                        let videos_num = if channel.video_count > 0 {
-                            crate::youtube::clean_stat_number(&channel.video_count.to_string())
-                        } else if !channel.video_count_text.is_empty()
-                            && channel.video_count_text != "-"
-                        {
-                            crate::youtube::clean_stat_number(&channel.video_count_text)
-                        } else {
-                            "-".to_string()
-                        };
-
-                        let vid_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                videos_num.clone(),
-                                font_id.clone(),
-                                Color32::from_rgb(243, 232, 255),
-                            )
-                        });
-                        let icon3_w = 15.0_f32;
-
-                        let delta_vid_str = crate::youtube::format_compact_delta(delta_videos);
-                        let (delta3_galley, delta3_color) =
-                            if !delta_vid_str.is_empty() {
-                                let delta_font = egui::FontId::proportional(11.0);
-                                let color = if vid_increased {
-                                    Color32::from_rgb(252, 165, 165)
-                                } else {
-                                    Color32::from_rgb(253, 186, 116)
-                                };
-                                (
-                                    Some(ui.fonts(|f| {
-                                        f.layout_no_wrap(delta_vid_str, delta_font, color)
-                                    })),
-                                    color,
-                                )
-                            } else {
-                                (None, Color32::TRANSPARENT)
-                            };
-
-                        let circle3_w = if vid_increased { 10.0_f32 } else { 0.0_f32 };
-                        let delta3_w = delta3_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total3_w =
-                            icon3_w + item_gap + vid_galley.size().x + circle3_w + delta3_w;
-                        let start3_x = box3_rect.center().x - total3_w / 2.0;
-
-                        let icon3_rect = Rect::from_center_size(
-                            Pos2::new(start3_x + icon3_w / 2.0, box3_rect.center().y),
-                            Vec2::new(15.0, 13.0),
-                        );
-                        crate::icons::draw_video_icon(
-                            ui.painter(),
-                            icon3_rect,
-                            Color32::from_rgb(192, 132, 252),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start3_x + icon3_w + item_gap,
-                                box3_rect.center().y - vid_galley.size().y / 2.0,
-                            ),
-                            vid_galley,
-                            Color32::from_rgb(243, 232, 255),
-                        );
-
-                        let mut cur3_x =
-                            start3_x + icon3_w + item_gap + total3_w - circle3_w - delta3_w + 5.0;
-                        if vid_increased {
-                            let circle_pos = Pos2::new(cur3_x + 3.5, box3_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                3.5,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                3.5,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur3_x += 10.0;
-                        }
-
-                        if let Some(galley) = delta3_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur3_x, box3_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta3_color,
-                            );
-                        }
-
-                        let vid_tooltip = if let Some(init) = channel.initial_video_count {
-                            if delta_videos != 0 {
-                                format!(
-                                    "Videos: {} | Since launch: {:+} (initial: {})",
-                                    videos_num, delta_videos, init
-                                )
-                            } else {
-                                format!("Videos: {} (no change since launch)", videos_num)
-                            }
-                        } else {
-                            format!("Videos: {}", videos_num)
-                        };
-                        box3_resp.on_hover_text(vid_tooltip);
-
-                        // Comments Box
-                        let delta_comments = channel.delta_comments();
-                        let comm_increased = delta_comments > 0;
-                        let comm_changed = delta_comments != 0 || channel.comments_changed;
-
-                        let (box4_rect, box4_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box4_rect,
-                            Rounding::same(8.0),
-                            Color32::from_rgb(46, 36, 16),
-                        );
-                        let stroke4_color = if comm_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if comm_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(251, 191, 36)
-                        };
-                        let stroke4_width = if comm_changed { 1.8_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box4_rect,
-                            Rounding::same(8.0),
-                            Stroke::new(stroke4_width, stroke4_color),
-                        );
-
-                        let comments_num = if channel.total_comments > 0 {
-                            crate::youtube::clean_stat_number(&channel.total_comments.to_string())
-                        } else {
-                            "0".to_string()
-                        };
-
-                        let comm_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                comments_num.clone(),
-                                font_id,
-                                Color32::from_rgb(254, 243, 199),
-                            )
-                        });
-                        let icon4_w = 15.0_f32;
-
-                        let delta_comm_str = crate::youtube::format_compact_delta(delta_comments);
-                        let (delta4_galley, delta4_color) = if !delta_comm_str.is_empty() {
-                            let delta_font = egui::FontId::proportional(11.0);
-                            let color = if comm_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_comm_str, delta_font, color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle4_w = if comm_increased { 10.0_f32 } else { 0.0_f32 };
-                        let delta4_w = delta4_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
-                        let total4_w =
-                            icon4_w + item_gap + comm_galley.size().x + circle4_w + delta4_w;
-                        let start4_x = box4_rect.center().x - total4_w / 2.0;
-
-                        let icon4_rect = Rect::from_center_size(
-                            Pos2::new(start4_x + icon4_w / 2.0, box4_rect.center().y),
-                            Vec2::new(15.0, 13.0),
-                        );
-                        crate::icons::draw_comment_icon(
-                            ui.painter(),
-                            icon4_rect,
-                            Color32::from_rgb(251, 191, 36),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start4_x + icon4_w + item_gap,
-                                box4_rect.center().y - comm_galley.size().y / 2.0,
-                            ),
-                            comm_galley,
-                            Color32::from_rgb(254, 243, 199),
-                        );
-
-                        let mut cur4_x =
-                            start4_x + icon4_w + item_gap + total4_w - circle4_w - delta4_w + 5.0;
-                        if comm_increased {
-                            let circle_pos = Pos2::new(cur4_x + 3.5, box4_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                3.5,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                3.5,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur4_x += 10.0;
-                        }
-
-                        if let Some(galley) = delta4_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur4_x, box4_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta4_color,
-                            );
-                        }
-
-                        let comm_tooltip = if let Some(init) = channel.initial_total_comments {
-                            if delta_comments != 0 {
-                                format!(
-                                    "Comments: {} | Since launch: {:+} (initial: {})",
-                                    comments_num, delta_comments, init
-                                )
-                            } else {
-                                format!("Comments: {} (no change since launch)", comments_num)
-                            }
-                        } else {
-                            format!("Comments: {} (tracked via SQLite cache)", comments_num)
-                        };
-                        box4_resp.on_hover_text(comm_tooltip);
-                    });
+                    }
                 });
             });
         });
@@ -2189,519 +1748,52 @@ impl SocialCountApp {
                     }
                 });
 
-                // --- 2x2 STATS GRID ON THE RIGHT ---
+                // --- STATS ON THE RIGHT (CONFIGURABLE) ---
+                let mut visible_metrics = Vec::new();
+                if self.config.show_subscribers {
+                    visible_metrics.push(CardMetric::Subscribers);
+                }
+                if self.config.show_views {
+                    visible_metrics.push(CardMetric::Views);
+                }
+                if self.config.show_videos {
+                    visible_metrics.push(CardMetric::Videos);
+                }
+                if self.config.show_comments {
+                    visible_metrics.push(CardMetric::Comments);
+                }
+                if self.config.show_likes {
+                    visible_metrics.push(CardMetric::Likes);
+                }
+
                 let right_w = ui.available_width().max(80.0);
                 let col_gap = 4.0_f32;
                 let box_w = ((right_w - col_gap) / 2.0_f32).floor();
                 let box_h = 18.0_f32;
-                let box_size = Vec2::new(box_w, box_h);
-                let font_id = egui::FontId::proportional(11.0);
-                let delta_font = egui::FontId::proportional(9.0);
-                let item_gap = 3.0_f32;
 
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = gap_y;
 
-                    // ROW 1: SUBSCRIBERS & VIEWS
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = col_gap;
-
-                        // 1. Subscribers Box
-                        let delta_sub = channel.delta_subscribers();
-                        let sub_increased = delta_sub > 0;
-                        let sub_changed = delta_sub != 0 || channel.sub_changed;
-
-                        let (box1_rect, box1_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box1_rect,
-                            Rounding::same(4.0),
-                            Color32::from_rgb(16, 44, 28),
-                        );
-                        let stroke1_color = if sub_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if sub_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(52, 211, 153)
-                        };
-                        let stroke1_width = if sub_changed { 1.5_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box1_rect,
-                            Rounding::same(4.0),
-                            Stroke::new(stroke1_width, stroke1_color),
-                        );
-
-                        let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
-                        let sub_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                sub_num.clone(),
-                                font_id.clone(),
-                                Color32::from_rgb(209, 250, 229),
-                            )
-                        });
-                        let icon1_w = 11.0_f32;
-
-                        let delta_sub_str = crate::youtube::format_compact_delta(delta_sub);
-                        let (delta1_galley, delta1_color) = if !delta_sub_str.is_empty() {
-                            let color = if sub_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_sub_str, delta_font.clone(), color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle1_w = if sub_increased { 7.0_f32 } else { 0.0_f32 };
-                        let delta1_w = delta1_galley.as_ref().map_or(0.0, |g| g.size().x + 2.0);
-                        let total1_w =
-                            icon1_w + item_gap + sub_galley.size().x + circle1_w + delta1_w;
-                        let start1_x =
-                            (box1_rect.center().x - total1_w / 2.0).max(box1_rect.min.x + 2.0);
-
-                        let icon1_rect = Rect::from_center_size(
-                            Pos2::new(start1_x + icon1_w / 2.0, box1_rect.center().y),
-                            Vec2::splat(11.0),
-                        );
-                        crate::icons::draw_user_icon(
-                            ui.painter(),
-                            icon1_rect,
-                            Color32::from_rgb(52, 211, 153),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start1_x + icon1_w + item_gap,
-                                box1_rect.center().y - sub_galley.size().y / 2.0,
-                            ),
-                            sub_galley,
-                            Color32::from_rgb(209, 250, 229),
-                        );
-
-                        let mut cur1_x =
-                            start1_x + icon1_w + item_gap + total1_w - circle1_w - delta1_w + 2.0;
-                        if sub_increased {
-                            let circle_pos = Pos2::new(cur1_x + 2.0, box1_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                2.0,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                2.0,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur1_x += 7.0;
+                    for (row_idx, chunk) in visible_metrics.chunks(2).enumerate() {
+                        if row_idx > 0 {
+                            ui.add_space(gap_y);
                         }
-
-                        if let Some(galley) = delta1_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur1_x, box1_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta1_color,
-                            );
-                        }
-
-                        let sub_tooltip = if let Some(init) = channel.initial_subscriber_count {
-                            if delta_sub != 0 {
-                                format!(
-                                    "Subscribers: {} | Since launch: {:+} (initial: {})",
-                                    sub_num, delta_sub, init
-                                )
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = col_gap;
+                            if chunk.len() == 2 {
+                                let box_size = Vec2::new(box_w, box_h);
+                                render_compact_metric_box(ui, box_size, chunk[0], channel);
+                                render_compact_metric_box(ui, box_size, chunk[1], channel);
                             } else {
-                                format!("Subscribers: {} (no change since launch)", sub_num)
+                                let box_size = Vec2::new(right_w, box_h);
+                                render_compact_metric_box(ui, box_size, chunk[0], channel);
                             }
-                        } else {
-                            format!("Subscribers: {}", sub_num)
-                        };
-                        box1_resp.on_hover_text(sub_tooltip);
-
-                        // 2. Views Box
-                        let delta_views = channel.delta_views();
-                        let views_increased = delta_views > 0;
-                        let views_changed = delta_views != 0 || channel.views_changed;
-
-                        let (box2_rect, box2_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box2_rect,
-                            Rounding::same(4.0),
-                            Color32::from_rgb(18, 36, 58),
-                        );
-                        let stroke2_color = if views_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if views_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(96, 165, 250)
-                        };
-                        let stroke2_width = if views_changed { 1.5_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box2_rect,
-                            Rounding::same(4.0),
-                            Stroke::new(stroke2_width, stroke2_color),
-                        );
-
-                        let views_num = crate::youtube::clean_stat_number(&channel.views_text);
-                        let views_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                views_num.clone(),
-                                font_id.clone(),
-                                Color32::from_rgb(224, 242, 254),
-                            )
                         });
-                        let icon2_w = 12.0_f32;
-
-                        let delta_views_str = crate::youtube::format_compact_delta(delta_views);
-                        let (delta2_galley, delta2_color) = if !delta_views_str.is_empty() {
-                            let color = if views_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_views_str, delta_font.clone(), color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle2_w = if views_increased { 7.0_f32 } else { 0.0_f32 };
-                        let delta2_w = delta2_galley.as_ref().map_or(0.0, |g| g.size().x + 2.0);
-                        let total2_w =
-                            icon2_w + item_gap + views_galley.size().x + circle2_w + delta2_w;
-                        let start2_x =
-                            (box2_rect.center().x - total2_w / 2.0).max(box2_rect.min.x + 2.0);
-
-                        let icon2_rect = Rect::from_center_size(
-                            Pos2::new(start2_x + icon2_w / 2.0, box2_rect.center().y),
-                            Vec2::new(12.0, 9.0),
-                        );
-                        crate::icons::draw_eye_icon(
-                            ui.painter(),
-                            icon2_rect,
-                            Color32::from_rgb(96, 165, 250),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start2_x + icon2_w + item_gap,
-                                box2_rect.center().y - views_galley.size().y / 2.0,
-                            ),
-                            views_galley,
-                            Color32::from_rgb(224, 242, 254),
-                        );
-
-                        let mut cur2_x =
-                            start2_x + icon2_w + item_gap + total2_w - circle2_w - delta2_w + 2.0;
-                        if views_increased {
-                            let circle_pos = Pos2::new(cur2_x + 2.0, box2_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                2.0,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                2.0,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur2_x += 7.0;
-                        }
-
-                        if let Some(galley) = delta2_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur2_x, box2_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta2_color,
-                            );
-                        }
-
-                        let views_tooltip = if let Some(init) = channel.initial_views_count {
-                            if delta_views != 0 {
-                                format!(
-                                    "Views: {} | Since launch: {:+} (initial: {})",
-                                    views_num, delta_views, init
-                                )
-                            } else {
-                                format!("Views: {} (no change since launch)", views_num)
-                            }
-                        } else {
-                            format!("Views: {}", views_num)
-                        };
-                        box2_resp.on_hover_text(views_tooltip);
-                    });
-
-                    // ROW 2: VIDEOS & COMMENTS
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = col_gap;
-
-                        // 3. Videos Box
-                        let delta_videos = channel.delta_video_count();
-                        let vid_increased = delta_videos > 0;
-                        let vid_changed = delta_videos != 0 || channel.video_changed;
-
-                        let (box3_rect, box3_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box3_rect,
-                            Rounding::same(4.0),
-                            Color32::from_rgb(38, 22, 54),
-                        );
-                        let stroke3_color = if vid_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if vid_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(192, 132, 252)
-                        };
-                        let stroke3_width = if vid_changed { 1.5_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box3_rect,
-                            Rounding::same(4.0),
-                            Stroke::new(stroke3_width, stroke3_color),
-                        );
-
-                        let videos_num = if channel.video_count > 0 {
-                            crate::youtube::clean_stat_number(&channel.video_count.to_string())
-                        } else if !channel.video_count_text.is_empty()
-                            && channel.video_count_text != "-"
-                        {
-                            crate::youtube::clean_stat_number(&channel.video_count_text)
-                        } else {
-                            "-".to_string()
-                        };
-
-                        let vid_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                videos_num.clone(),
-                                font_id.clone(),
-                                Color32::from_rgb(243, 232, 255),
-                            )
-                        });
-                        let icon3_w = 12.0_f32;
-
-                        let delta_vid_str = crate::youtube::format_compact_delta(delta_videos);
-                        let (delta3_galley, delta3_color) = if !delta_vid_str.is_empty() {
-                            let color = if vid_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_vid_str, delta_font.clone(), color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle3_w = if vid_increased { 7.0_f32 } else { 0.0_f32 };
-                        let delta3_w = delta3_galley.as_ref().map_or(0.0, |g| g.size().x + 2.0);
-                        let total3_w =
-                            icon3_w + item_gap + vid_galley.size().x + circle3_w + delta3_w;
-                        let start3_x =
-                            (box3_rect.center().x - total3_w / 2.0).max(box3_rect.min.x + 2.0);
-
-                        let icon3_rect = Rect::from_center_size(
-                            Pos2::new(start3_x + icon3_w / 2.0, box3_rect.center().y),
-                            Vec2::new(12.0, 10.0),
-                        );
-                        crate::icons::draw_video_icon(
-                            ui.painter(),
-                            icon3_rect,
-                            Color32::from_rgb(192, 132, 252),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start3_x + icon3_w + item_gap,
-                                box3_rect.center().y - vid_galley.size().y / 2.0,
-                            ),
-                            vid_galley,
-                            Color32::from_rgb(243, 232, 255),
-                        );
-
-                        let mut cur3_x =
-                            start3_x + icon3_w + item_gap + total3_w - circle3_w - delta3_w + 2.0;
-                        if vid_increased {
-                            let circle_pos = Pos2::new(cur3_x + 2.0, box3_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                2.0,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                2.0,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur3_x += 7.0;
-                        }
-
-                        if let Some(galley) = delta3_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur3_x, box3_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta3_color,
-                            );
-                        }
-
-                        let vid_tooltip = if let Some(init) = channel.initial_video_count {
-                            if delta_videos != 0 {
-                                format!(
-                                    "Videos: {} | Since launch: {:+} (initial: {})",
-                                    videos_num, delta_videos, init
-                                )
-                            } else {
-                                format!("Videos: {} (no change since launch)", videos_num)
-                            }
-                        } else {
-                            format!("Videos: {}", videos_num)
-                        };
-                        box3_resp.on_hover_text(vid_tooltip);
-
-                        // 4. Comments Box
-                        let delta_comments = channel.delta_comments();
-                        let comm_increased = delta_comments > 0;
-                        let comm_changed = delta_comments != 0 || channel.comments_changed;
-
-                        let (box4_rect, box4_resp) =
-                            ui.allocate_exact_size(box_size, egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            box4_rect,
-                            Rounding::same(4.0),
-                            Color32::from_rgb(46, 36, 16),
-                        );
-                        let stroke4_color = if comm_increased {
-                            Color32::from_rgb(239, 68, 68)
-                        } else if comm_changed {
-                            Color32::from_rgb(249, 115, 22)
-                        } else {
-                            Color32::from_rgb(251, 191, 36)
-                        };
-                        let stroke4_width = if comm_changed { 1.5_f32 } else { 1.0_f32 };
-                        ui.painter().rect_stroke(
-                            box4_rect,
-                            Rounding::same(4.0),
-                            Stroke::new(stroke4_width, stroke4_color),
-                        );
-
-                        let comments_num = if channel.total_comments > 0 {
-                            crate::youtube::clean_stat_number(&channel.total_comments.to_string())
-                        } else {
-                            "0".to_string()
-                        };
-
-                        let comm_galley = ui.fonts(|f| {
-                            f.layout_no_wrap(
-                                comments_num.clone(),
-                                font_id,
-                                Color32::from_rgb(254, 243, 199),
-                            )
-                        });
-                        let icon4_w = 12.0_f32;
-
-                        let delta_comm_str = crate::youtube::format_compact_delta(delta_comments);
-                        let (delta4_galley, delta4_color) = if !delta_comm_str.is_empty() {
-                            let color = if comm_increased {
-                                Color32::from_rgb(252, 165, 165)
-                            } else {
-                                Color32::from_rgb(253, 186, 116)
-                            };
-                            (
-                                Some(ui.fonts(|f| {
-                                    f.layout_no_wrap(delta_comm_str, delta_font, color)
-                                })),
-                                color,
-                            )
-                        } else {
-                            (None, Color32::TRANSPARENT)
-                        };
-
-                        let circle4_w = if comm_increased { 7.0_f32 } else { 0.0_f32 };
-                        let delta4_w = delta4_galley.as_ref().map_or(0.0, |g| g.size().x + 2.0);
-                        let total4_w =
-                            icon4_w + item_gap + comm_galley.size().x + circle4_w + delta4_w;
-                        let start4_x =
-                            (box4_rect.center().x - total4_w / 2.0).max(box4_rect.min.x + 2.0);
-
-                        let icon4_rect = Rect::from_center_size(
-                            Pos2::new(start4_x + icon4_w / 2.0, box4_rect.center().y),
-                            Vec2::new(12.0, 10.0),
-                        );
-                        crate::icons::draw_comment_icon(
-                            ui.painter(),
-                            icon4_rect,
-                            Color32::from_rgb(251, 191, 36),
-                        );
-
-                        ui.painter().galley(
-                            Pos2::new(
-                                start4_x + icon4_w + item_gap,
-                                box4_rect.center().y - comm_galley.size().y / 2.0,
-                            ),
-                            comm_galley,
-                            Color32::from_rgb(254, 243, 199),
-                        );
-
-                        let mut cur4_x =
-                            start4_x + icon4_w + item_gap + total4_w - circle4_w - delta4_w + 2.0;
-                        if comm_increased {
-                            let circle_pos = Pos2::new(cur4_x + 2.0, box4_rect.center().y);
-                            ui.painter().circle_filled(
-                                circle_pos,
-                                2.0,
-                                Color32::from_rgb(239, 68, 68),
-                            );
-                            ui.painter().circle_stroke(
-                                circle_pos,
-                                2.0,
-                                Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
-                            );
-                            cur4_x += 7.0;
-                        }
-
-                        if let Some(galley) = delta4_galley {
-                            ui.painter().galley(
-                                Pos2::new(cur4_x, box4_rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                delta4_color,
-                            );
-                        }
-
-                        let comm_tooltip = if let Some(init) = channel.initial_total_comments {
-                            if delta_comments != 0 {
-                                format!(
-                                    "Comments: {} | Since launch: {:+} (initial: {})",
-                                    comments_num, delta_comments, init
-                                )
-                            } else {
-                                format!("Comments: {} (no change since launch)", comments_num)
-                            }
-                        } else {
-                            format!("Comments: {} (tracked via SQLite cache)", comments_num)
-                        };
-                        box4_resp.on_hover_text(comm_tooltip);
-                    });
+                    }
                 });
             });
         });
     }
-
     /// Complete Profile Manager (CRUD) modal accessible via right-click or settings button
     fn render_profile_manager(
         &mut self,
@@ -2877,7 +1969,7 @@ impl SocialCountApp {
         ui.add_space(6.0);
 
         // 3. CHANNELS LIST (READ, UPDATE, DELETE)
-        let list_h = (ui.available_height() - 36.0).max(100.0);
+        let list_h = (ui.available_height() - 95.0).max(80.0);
         let mut to_delete_idx = None;
         let mut to_move_up_idx = None;
         let mut to_move_down_idx = None;
@@ -3110,7 +2202,55 @@ impl SocialCountApp {
 
         ui.add_space(6.0);
 
-        // 4. FOOTER
+        // 4. DISPLAYED METRICS CONFIGURATION
+        egui::Frame::none()
+            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
+            .stroke(Stroke::new(1.0_f32, Color32::from_white_alpha(15)))
+            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(8.0, 5.0))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Displayed Metrics in Cards:")
+                        .size(11.0)
+                        .strong()
+                        .color(Color32::from_rgb(226, 232, 240)),
+                );
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    let mut changed = false;
+                    if ui
+                        .checkbox(&mut self.config.show_subscribers, "Subscribers")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if ui.checkbox(&mut self.config.show_views, "Views").changed() {
+                        changed = true;
+                    }
+                    if ui
+                        .checkbox(&mut self.config.show_videos, "Videos")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .checkbox(&mut self.config.show_comments, "Comments")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if ui.checkbox(&mut self.config.show_likes, "Likes").changed() {
+                        changed = true;
+                    }
+                    if changed {
+                        let _ = self.config.save();
+                    }
+                });
+            });
+
+        ui.add_space(6.0);
+
+        // 5. FOOTER
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(format!("Total channels: {}", self.config.channels.len()))
@@ -3300,7 +2440,7 @@ impl SocialCountApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let yt_btn = ui.add_sized(
-                            [125.0, 24.0],
+                            [120.0, 24.0],
                             egui::Button::new(
                                 egui::RichText::new("Open on YouTube")
                                     .size(11.0)
@@ -3319,6 +2459,37 @@ impl SocialCountApp {
                         }
                         if yt_btn.clicked() {
                             let _ = open::that(&channel.channel_url);
+                        }
+
+                        let export_btn = ui.add_sized(
+                            [85.0, 24.0],
+                            egui::Button::new(
+                                egui::RichText::new("Export CSV")
+                                    .size(11.0)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(16, 149, 106))
+                            .stroke(Stroke::new(
+                                1.0_f32,
+                                Color32::from_rgba_unmultiplied(255, 255, 255, 45),
+                            ))
+                            .rounding(Rounding::same(6.0)),
+                        );
+                        if export_btn.hovered() {
+                            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                        }
+                        if export_btn.clicked() {
+                            match export_channel_to_csv(&channel) {
+                                Ok(path) => {
+                                    self.export_notification =
+                                        Some((format!("Exported to {}", path), Instant::now()));
+                                }
+                                Err(err) => {
+                                    self.export_notification =
+                                        Some((format!("Export failed: {}", err), Instant::now()));
+                                }
+                            }
                         }
                     });
                 });
@@ -3345,6 +2516,7 @@ impl SocialCountApp {
                             channel.delta_subscribers(),
                             Color32::from_rgb(16, 44, 28),
                             Color32::from_rgb(52, 211, 153),
+                            egui::Sense::hover(),
                         );
                     });
                     ui.vertical(|ui| {
@@ -3356,6 +2528,7 @@ impl SocialCountApp {
                             channel.delta_views(),
                             Color32::from_rgb(18, 36, 58),
                             Color32::from_rgb(96, 165, 250),
+                            egui::Sense::hover(),
                         );
                     });
                 });
@@ -3376,8 +2549,36 @@ impl SocialCountApp {
                             channel.delta_video_count(),
                             Color32::from_rgb(38, 22, 54),
                             Color32::from_rgb(192, 132, 252),
+                            egui::Sense::hover(),
                         );
                     });
+                    ui.vertical(|ui| {
+                        let total_likes = if channel.total_likes > 0 {
+                            channel.total_likes
+                        } else if let Some(cid) = &channel_id_to_query {
+                            crate::db::Database::open()
+                                .ok()
+                                .and_then(|db| db.get_channel_total_likes(cid).ok())
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        let l_num = crate::youtube::clean_stat_number(&total_likes.to_string());
+                        render_detail_stat_pill(
+                            ui,
+                            Vec2::new(card_w, 42.0),
+                            "Tracked Likes",
+                            &l_num,
+                            channel.delta_likes(),
+                            Color32::from_rgb(48, 18, 28),
+                            Color32::from_rgb(251, 113, 133),
+                            egui::Sense::hover(),
+                        );
+                    });
+                });
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         let total_comments = if channel.total_comments > 0 {
                             channel.total_comments
@@ -3391,17 +2592,66 @@ impl SocialCountApp {
                         };
                         let c_num =
                             crate::youtube::clean_stat_number(&total_comments.to_string());
-                        render_detail_stat_pill(
+
+                        let latest_comm = channel.latest_comment.clone().or_else(|| {
+                            channel_id_to_query.as_ref().and_then(|cid| {
+                                crate::db::Database::open().ok().and_then(|db| db.get_channel_latest_comment(cid).ok().flatten())
+                            })
+                        });
+
+                        let pill_resp = render_detail_stat_pill(
                             ui,
-                            Vec2::new(card_w, 42.0),
+                            Vec2::new(ui.available_width(), 42.0),
                             "Tracked Comments",
                             &c_num,
                             channel.delta_comments(),
                             Color32::from_rgb(46, 36, 16),
                             Color32::from_rgb(251, 191, 36),
+                            egui::Sense::click(),
                         );
+
+                        if pill_resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
+                        if pill_resp.clicked() {
+                            let url = if let Some(comm) = &latest_comm {
+                                if !comm.video_id.is_empty() {
+                                    format!("https://www.youtube.com/watch?v={}", comm.video_id)
+                                } else if let Some(cid) = &channel.channel_id {
+                                    format!("https://www.youtube.com/channel/{}", cid)
+                                } else {
+                                    format!("https://www.youtube.com/@{}", channel.handle.trim_start_matches('@'))
+                                }
+                            } else if let Some(cid) = &channel.channel_id {
+                                format!("https://www.youtube.com/channel/{}", cid)
+                            } else {
+                                format!("https://www.youtube.com/@{}", channel.handle.trim_start_matches('@'))
+                            };
+                            let _ = open::that(&url);
+                        }
+
+                        show_comments_metric_tooltip(&pill_resp, &channel, &latest_comm, &c_num, channel.delta_comments());
                     });
                 });
+
+                if let Some((msg, time)) = &self.export_notification {
+                    if time.elapsed() < std::time::Duration::from_secs(5) {
+                        ui.add_space(6.0);
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(16, 149, 106, 60))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(msg)
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(209, 250, 229)),
+                                );
+                            });
+                    }
+                }
 
                 ui.add_space(12.0);
 
@@ -4121,6 +3371,7 @@ impl SocialCountApp {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_detail_stat_pill(
     ui: &mut egui::Ui,
     size: Vec2,
@@ -4129,8 +3380,9 @@ fn render_detail_stat_pill(
     delta: i64,
     bg_color: Color32,
     accent_color: Color32,
-) {
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    sense: egui::Sense,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
     ui.painter()
         .rect_filled(rect, Rounding::same(8.0), bg_color);
     ui.painter().rect_stroke(
@@ -4173,7 +3425,12 @@ fn render_detail_stat_pill(
             delta_color,
         );
     }
-    resp.on_hover_text(format!("{}: {}", label, val_str));
+    let resp = if sense == egui::Sense::hover() {
+        resp.on_hover_text(format!("{}: {}", label, val_str))
+    } else {
+        resp
+    };
+    resp
 }
 
 fn format_unix_timestamp(ts: u64) -> String {
@@ -4201,6 +3458,143 @@ fn format_unix_timestamp(ts: u64) -> String {
     } else {
         "recent".to_string()
     }
+}
+
+fn show_comments_metric_tooltip(
+    resp: &egui::Response,
+    channel: &ChannelData,
+    latest_comm: &Option<crate::db::LatestCommentInfo>,
+    comments_num: &str,
+    delta_comments: i64,
+) {
+    resp.clone().on_hover_ui(|ui| {
+        ui.set_max_width(320.0);
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Tracked Comments")
+                        .strong()
+                        .size(12.5)
+                        .color(Color32::from_rgb(251, 191, 36)),
+                );
+                if delta_comments > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("(+{} new)", delta_comments))
+                            .size(11.0)
+                            .color(Color32::from_rgb(239, 68, 68))
+                            .strong(),
+                    );
+                }
+            });
+            ui.add_space(2.0);
+
+            if let Some(init) = channel.initial_total_comments {
+                if delta_comments != 0 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Total: {} | Since launch: {:+} (initial: {})",
+                            comments_num, delta_comments, init
+                        ))
+                        .size(11.0)
+                        .color(Color32::from_rgb(226, 232, 240)),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Total: {} (no change since launch)",
+                            comments_num
+                        ))
+                        .size(11.0)
+                        .color(Color32::from_rgb(226, 232, 240)),
+                    );
+                }
+            } else {
+                ui.label(
+                    egui::RichText::new(format!("Total: {}", comments_num))
+                        .size(11.0)
+                        .color(Color32::from_rgb(226, 232, 240)),
+                );
+            }
+
+            if let Some(comm) = latest_comm {
+                ui.add_space(5.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                ui.label(
+                    egui::RichText::new("Latest Comment:")
+                        .strong()
+                        .size(11.5)
+                        .color(Color32::from_rgb(253, 186, 116)),
+                );
+
+                if !comm.author.is_empty() {
+                    let author_display = if comm.author.starts_with('@') {
+                        comm.author.clone()
+                    } else {
+                        format!("@{}", comm.author)
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("By {}", author_display))
+                            .strong()
+                            .size(11.0)
+                            .color(Color32::from_rgb(147, 197, 253)),
+                    );
+                }
+
+                if !comm.video_title.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("On \"{}\"", comm.video_title))
+                            .italics()
+                            .size(10.5)
+                            .color(Color32::from_rgb(203, 213, 225)),
+                    );
+                }
+
+                if !comm.text.is_empty() {
+                    ui.add_space(2.0);
+                    let text_clean = comm.text.replace('\n', " ").trim().to_string();
+                    let display_text = if text_clean.chars().count() > 180 {
+                        let truncated: String = text_clean.chars().take(180).collect();
+                        format!("\"{}...\"", truncated.trim())
+                    } else {
+                        format!("\"{}\"", text_clean)
+                    };
+                    ui.label(
+                        egui::RichText::new(display_text)
+                            .size(11.0)
+                            .color(Color32::WHITE),
+                    );
+                }
+
+                if comm.timestamp > 0 {
+                    ui.add_space(1.0);
+                    let time_str = format_unix_timestamp(comm.timestamp);
+                    ui.label(
+                        egui::RichText::new(time_str)
+                            .size(10.0)
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                }
+
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Click to open video on YouTube")
+                        .size(10.5)
+                        .underline()
+                        .color(Color32::from_rgb(96, 165, 250)),
+                );
+            } else {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Click to open channel on YouTube")
+                        .size(10.5)
+                        .underline()
+                        .color(Color32::from_rgb(96, 165, 250)),
+                );
+            }
+        });
+    });
 }
 
 pub fn sort_videos_list(
@@ -4340,6 +3734,1248 @@ pub fn format_compact_metric(val: u64) -> String {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum CardMetric {
+    Subscribers,
+    Views,
+    Videos,
+    Comments,
+    Likes,
+}
+
+fn render_card_metric_box(
+    ui: &mut egui::Ui,
+    box_size: Vec2,
+    metric: CardMetric,
+    channel: &ChannelData,
+) {
+    let font_id = egui::FontId::proportional(13.0);
+    let item_gap = 5.0_f32;
+
+    match metric {
+        CardMetric::Subscribers => {
+            let delta_sub = channel.delta_subscribers();
+            let sub_increased = delta_sub > 0;
+            let sub_changed = delta_sub != 0 || channel.sub_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(16, 44, 28));
+            let stroke_color = if sub_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if sub_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(52, 211, 153)
+            };
+            let stroke_width = if sub_changed { 1.8_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(8.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
+            let sub_galley = ui.fonts(|f| {
+                f.layout_no_wrap(sub_num.clone(), font_id, Color32::from_rgb(209, 250, 229))
+            });
+            let icon_w = 14.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_sub);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if sub_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if sub_increased { 10.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+            let total_w = icon_w + item_gap + sub_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::splat(14.0),
+            );
+            crate::icons::draw_user_icon(ui.painter(), icon_rect, Color32::from_rgb(52, 211, 153));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - sub_galley.size().y / 2.0,
+                ),
+                sub_galley,
+                Color32::from_rgb(209, 250, 229),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 5.0;
+            if sub_increased {
+                let circle_pos = Pos2::new(cur_x + 3.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    3.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 10.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_subscriber_count {
+                if delta_sub != 0 {
+                    format!(
+                        "Subscribers: {} | Since launch: {:+} (initial: {})",
+                        sub_num, delta_sub, init
+                    )
+                } else {
+                    format!("Subscribers: {} (no change since launch)", sub_num)
+                }
+            } else {
+                format!("Subscribers: {}", sub_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Views => {
+            let delta_views = channel.delta_views();
+            let views_increased = delta_views > 0;
+            let views_changed = delta_views != 0 || channel.views_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(18, 36, 58));
+            let stroke_color = if views_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if views_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(96, 165, 250)
+            };
+            let stroke_width = if views_changed { 1.8_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(8.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let views_num = crate::youtube::clean_stat_number(&channel.views_text);
+            let views_galley = ui.fonts(|f| {
+                f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254))
+            });
+            let icon_w = 16.0_f32;
+
+            let delta_views_str = crate::youtube::format_compact_delta(delta_views);
+            let (delta_galley, delta_color) = if !delta_views_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if views_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if views_increased { 10.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+            let total_w = icon_w + item_gap + views_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(16.0, 12.0),
+            );
+            crate::icons::draw_eye_icon(ui.painter(), icon_rect, Color32::from_rgb(96, 165, 250));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - views_galley.size().y / 2.0,
+                ),
+                views_galley,
+                Color32::from_rgb(224, 242, 254),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 5.0;
+            if views_increased {
+                let circle_pos = Pos2::new(cur_x + 3.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    3.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 10.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_views_count {
+                if delta_views != 0 {
+                    format!(
+                        "Views: {} | Since launch: {:+} (initial: {})",
+                        views_num, delta_views, init
+                    )
+                } else {
+                    format!("Views: {} (no change since launch)", views_num)
+                }
+            } else {
+                format!("Views: {}", views_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Videos => {
+            let delta_videos = channel.delta_video_count();
+            let vid_increased = delta_videos > 0;
+            let vid_changed = delta_videos != 0 || channel.video_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(38, 22, 54));
+            let stroke_color = if vid_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if vid_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(192, 132, 252)
+            };
+            let stroke_width = if vid_changed { 1.8_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(8.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let videos_num = if channel.video_count > 0 {
+                crate::youtube::clean_stat_number(&channel.video_count.to_string())
+            } else if !channel.video_count_text.is_empty() && channel.video_count_text != "-" {
+                crate::youtube::clean_stat_number(&channel.video_count_text)
+            } else {
+                "-".to_string()
+            };
+
+            let vid_galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    videos_num.clone(),
+                    font_id,
+                    Color32::from_rgb(243, 232, 255),
+                )
+            });
+            let icon_w = 15.0_f32;
+
+            let delta_videos_str = crate::youtube::format_compact_delta(delta_videos);
+            let (delta_galley, delta_color) = if !delta_videos_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if vid_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_videos_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if vid_increased { 10.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+            let total_w = icon_w + item_gap + vid_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(15.0, 13.0),
+            );
+            crate::icons::draw_video_icon(
+                ui.painter(),
+                icon_rect,
+                Color32::from_rgb(192, 132, 252),
+            );
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - vid_galley.size().y / 2.0,
+                ),
+                vid_galley,
+                Color32::from_rgb(243, 232, 255),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 5.0;
+            if vid_increased {
+                let circle_pos = Pos2::new(cur_x + 3.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    3.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 10.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_video_count {
+                if delta_videos != 0 {
+                    format!(
+                        "Videos: {} | Since launch: {:+} (initial: {})",
+                        videos_num, delta_videos, init
+                    )
+                } else {
+                    format!("Videos: {}", videos_num)
+                }
+            } else {
+                format!("Videos: {}", videos_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Comments => {
+            let delta_comments = channel.delta_comments();
+            let comm_increased = delta_comments > 0;
+            let comm_changed = delta_comments != 0 || channel.comments_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(46, 36, 16));
+            let stroke_color = if comm_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if comm_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(251, 191, 36)
+            };
+            let stroke_width = if comm_changed { 1.8_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(8.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let comments_num = if channel.total_comments > 0 {
+                crate::youtube::clean_stat_number(&channel.total_comments.to_string())
+            } else {
+                "-".to_string()
+            };
+
+            let comm_galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    comments_num.clone(),
+                    font_id,
+                    Color32::from_rgb(254, 243, 199),
+                )
+            });
+            let icon_w = 15.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_comments);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if comm_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if comm_increased { 10.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+            let total_w = icon_w + item_gap + comm_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(15.0, 13.0),
+            );
+            crate::icons::draw_comment_icon(
+                ui.painter(),
+                icon_rect,
+                Color32::from_rgb(251, 191, 36),
+            );
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - comm_galley.size().y / 2.0,
+                ),
+                comm_galley,
+                Color32::from_rgb(254, 243, 199),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 5.0;
+            if comm_increased {
+                let circle_pos = Pos2::new(cur_x + 3.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    3.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 10.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let latest_comm = channel.latest_comment.clone().or_else(|| {
+                channel.channel_id.as_ref().and_then(|cid| {
+                    crate::db::Database::open()
+                        .ok()
+                        .and_then(|db| db.get_channel_latest_comment(cid).ok().flatten())
+                })
+            });
+
+            if box_resp.clicked() {
+                let url = if let Some(comm) = &latest_comm {
+                    if !comm.video_id.is_empty() {
+                        format!("https://www.youtube.com/watch?v={}", comm.video_id)
+                    } else if let Some(cid) = &channel.channel_id {
+                        format!("https://www.youtube.com/channel/{}", cid)
+                    } else {
+                        format!(
+                            "https://www.youtube.com/@{}",
+                            channel.handle.trim_start_matches('@')
+                        )
+                    }
+                } else if let Some(cid) = &channel.channel_id {
+                    format!("https://www.youtube.com/channel/{}", cid)
+                } else {
+                    format!(
+                        "https://www.youtube.com/@{}",
+                        channel.handle.trim_start_matches('@')
+                    )
+                };
+                let _ = open::that(&url);
+            }
+
+            show_comments_metric_tooltip(
+                &box_resp,
+                channel,
+                &latest_comm,
+                &comments_num,
+                delta_comments,
+            );
+        }
+        CardMetric::Likes => {
+            let delta_likes = channel.delta_likes();
+            let likes_increased = delta_likes > 0;
+            let likes_changed = delta_likes != 0 || channel.likes_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(48, 18, 28));
+            let stroke_color = if likes_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if likes_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(251, 113, 133)
+            };
+            let stroke_width = if likes_changed { 1.8_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(8.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let likes_num = if channel.total_likes > 0 {
+                crate::youtube::clean_stat_number(&channel.total_likes.to_string())
+            } else {
+                "-".to_string()
+            };
+
+            let likes_galley = ui.fonts(|f| {
+                f.layout_no_wrap(likes_num.clone(), font_id, Color32::from_rgb(255, 228, 230))
+            });
+            let icon_w = 15.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_likes);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if likes_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if likes_increased { 10.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+            let total_w = icon_w + item_gap + likes_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(15.0, 13.0),
+            );
+            crate::icons::draw_like_icon(ui.painter(), icon_rect, Color32::from_rgb(251, 113, 133));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - likes_galley.size().y / 2.0,
+                ),
+                likes_galley,
+                Color32::from_rgb(255, 228, 230),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 5.0;
+            if likes_increased {
+                let circle_pos = Pos2::new(cur_x + 3.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 3.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    3.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 10.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_total_likes {
+                if delta_likes != 0 {
+                    format!(
+                        "Likes: {} | Since launch: {:+} (initial: {})",
+                        likes_num, delta_likes, init
+                    )
+                } else {
+                    format!("Likes: {}", likes_num)
+                }
+            } else {
+                format!("Likes: {}", likes_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+    }
+}
+
+fn render_compact_metric_box(
+    ui: &mut egui::Ui,
+    box_size: Vec2,
+    metric: CardMetric,
+    channel: &ChannelData,
+) {
+    let font_id = egui::FontId::proportional(11.0);
+    let delta_font = egui::FontId::proportional(9.0);
+    let item_gap = 3.0_f32;
+
+    match metric {
+        CardMetric::Subscribers => {
+            let delta_sub = channel.delta_subscribers();
+            let sub_increased = delta_sub > 0;
+            let sub_changed = delta_sub != 0 || channel.sub_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(16, 44, 28));
+            let stroke_color = if sub_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if sub_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(52, 211, 153)
+            };
+            let stroke_width = if sub_changed { 1.5_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(4.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let sub_num = crate::youtube::clean_stat_number(&channel.subscriber_text);
+            let sub_galley = ui.fonts(|f| {
+                f.layout_no_wrap(sub_num.clone(), font_id, Color32::from_rgb(209, 250, 229))
+            });
+            let icon_w = 11.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_sub);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let color = if sub_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if sub_increased { 8.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+            let total_w = icon_w + item_gap + sub_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::splat(11.0),
+            );
+            crate::icons::draw_user_icon(ui.painter(), icon_rect, Color32::from_rgb(52, 211, 153));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - sub_galley.size().y / 2.0,
+                ),
+                sub_galley,
+                Color32::from_rgb(209, 250, 229),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 3.0;
+            if sub_increased {
+                let circle_pos = Pos2::new(cur_x + 2.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    2.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 8.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_subscriber_count {
+                if delta_sub != 0 {
+                    format!(
+                        "Subscribers: {} | Since launch: {:+} (initial: {})",
+                        sub_num, delta_sub, init
+                    )
+                } else {
+                    format!("Subscribers: {} (no change since launch)", sub_num)
+                }
+            } else {
+                format!("Subscribers: {}", sub_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Views => {
+            let delta_views = channel.delta_views();
+            let views_increased = delta_views > 0;
+            let views_changed = delta_views != 0 || channel.views_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(18, 36, 58));
+            let stroke_color = if views_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if views_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(96, 165, 250)
+            };
+            let stroke_width = if views_changed { 1.5_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(4.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let views_num = crate::youtube::clean_stat_number(&channel.views_text);
+            let views_galley = ui.fonts(|f| {
+                f.layout_no_wrap(views_num.clone(), font_id, Color32::from_rgb(224, 242, 254))
+            });
+            let icon_w = 12.0_f32;
+
+            let delta_views_str = crate::youtube::format_compact_delta(delta_views);
+            let (delta_galley, delta_color) = if !delta_views_str.is_empty() {
+                let color = if views_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_views_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if views_increased { 8.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+            let total_w = icon_w + item_gap + views_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(12.0, 9.0),
+            );
+            crate::icons::draw_eye_icon(ui.painter(), icon_rect, Color32::from_rgb(96, 165, 250));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - views_galley.size().y / 2.0,
+                ),
+                views_galley,
+                Color32::from_rgb(224, 242, 254),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 3.0;
+            if views_increased {
+                let circle_pos = Pos2::new(cur_x + 2.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    2.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 8.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_views_count {
+                if delta_views != 0 {
+                    format!(
+                        "Views: {} | Since launch: {:+} (initial: {})",
+                        views_num, delta_views, init
+                    )
+                } else {
+                    format!("Views: {} (no change since launch)", views_num)
+                }
+            } else {
+                format!("Views: {}", views_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Videos => {
+            let delta_videos = channel.delta_video_count();
+            let vid_increased = delta_videos > 0;
+            let vid_changed = delta_videos != 0 || channel.video_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(38, 22, 54));
+            let stroke_color = if vid_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if vid_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(192, 132, 252)
+            };
+            let stroke_width = if vid_changed { 1.5_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(4.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let videos_num = if channel.video_count > 0 {
+                crate::youtube::clean_stat_number(&channel.video_count.to_string())
+            } else if !channel.video_count_text.is_empty() && channel.video_count_text != "-" {
+                crate::youtube::clean_stat_number(&channel.video_count_text)
+            } else {
+                "-".to_string()
+            };
+
+            let vid_galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    videos_num.clone(),
+                    font_id,
+                    Color32::from_rgb(243, 232, 255),
+                )
+            });
+            let icon_w = 11.0_f32;
+
+            let delta_videos_str = crate::youtube::format_compact_delta(delta_videos);
+            let (delta_galley, delta_color) = if !delta_videos_str.is_empty() {
+                let delta_font = egui::FontId::proportional(11.0);
+                let color = if vid_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_videos_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if vid_increased { 8.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+            let total_w = icon_w + item_gap + vid_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(11.0, 9.5),
+            );
+            crate::icons::draw_video_icon(
+                ui.painter(),
+                icon_rect,
+                Color32::from_rgb(192, 132, 252),
+            );
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - vid_galley.size().y / 2.0,
+                ),
+                vid_galley,
+                Color32::from_rgb(243, 232, 255),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 3.0;
+            if vid_increased {
+                let circle_pos = Pos2::new(cur_x + 2.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    2.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 8.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_video_count {
+                if delta_videos != 0 {
+                    format!(
+                        "Videos: {} | Since launch: {:+} (initial: {})",
+                        videos_num, delta_videos, init
+                    )
+                } else {
+                    format!("Videos: {}", videos_num)
+                }
+            } else {
+                format!("Videos: {}", videos_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+        CardMetric::Comments => {
+            let delta_comments = channel.delta_comments();
+            let comm_increased = delta_comments > 0;
+            let comm_changed = delta_comments != 0 || channel.comments_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(46, 36, 16));
+            let stroke_color = if comm_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if comm_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(251, 191, 36)
+            };
+            let stroke_width = if comm_changed { 1.5_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(4.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let comments_num = if channel.total_comments > 0 {
+                crate::youtube::clean_stat_number(&channel.total_comments.to_string())
+            } else {
+                "-".to_string()
+            };
+
+            let comm_galley = ui.fonts(|f| {
+                f.layout_no_wrap(
+                    comments_num.clone(),
+                    font_id,
+                    Color32::from_rgb(254, 243, 199),
+                )
+            });
+            let icon_w = 11.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_comments);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let color = if comm_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if comm_increased { 8.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+            let total_w = icon_w + item_gap + comm_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(11.0, 9.5),
+            );
+            crate::icons::draw_comment_icon(
+                ui.painter(),
+                icon_rect,
+                Color32::from_rgb(251, 191, 36),
+            );
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - comm_galley.size().y / 2.0,
+                ),
+                comm_galley,
+                Color32::from_rgb(254, 243, 199),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 3.0;
+            if comm_increased {
+                let circle_pos = Pos2::new(cur_x + 2.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    2.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 8.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let latest_comm = channel.latest_comment.clone().or_else(|| {
+                channel.channel_id.as_ref().and_then(|cid| {
+                    crate::db::Database::open()
+                        .ok()
+                        .and_then(|db| db.get_channel_latest_comment(cid).ok().flatten())
+                })
+            });
+
+            if box_resp.clicked() {
+                let url = if let Some(comm) = &latest_comm {
+                    if !comm.video_id.is_empty() {
+                        format!("https://www.youtube.com/watch?v={}", comm.video_id)
+                    } else if let Some(cid) = &channel.channel_id {
+                        format!("https://www.youtube.com/channel/{}", cid)
+                    } else {
+                        format!(
+                            "https://www.youtube.com/@{}",
+                            channel.handle.trim_start_matches('@')
+                        )
+                    }
+                } else if let Some(cid) = &channel.channel_id {
+                    format!("https://www.youtube.com/channel/{}", cid)
+                } else {
+                    format!(
+                        "https://www.youtube.com/@{}",
+                        channel.handle.trim_start_matches('@')
+                    )
+                };
+                let _ = open::that(&url);
+            }
+
+            show_comments_metric_tooltip(
+                &box_resp,
+                channel,
+                &latest_comm,
+                &comments_num,
+                delta_comments,
+            );
+        }
+        CardMetric::Likes => {
+            let delta_likes = channel.delta_likes();
+            let likes_increased = delta_likes > 0;
+            let likes_changed = delta_likes != 0 || channel.likes_changed;
+
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            ui.painter()
+                .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(48, 18, 28));
+            let stroke_color = if likes_increased {
+                Color32::from_rgb(239, 68, 68)
+            } else if likes_changed {
+                Color32::from_rgb(249, 115, 22)
+            } else {
+                Color32::from_rgb(251, 113, 133)
+            };
+            let stroke_width = if likes_changed { 1.5_f32 } else { 1.0_f32 };
+            ui.painter().rect_stroke(
+                box_rect,
+                Rounding::same(4.0),
+                Stroke::new(stroke_width, stroke_color),
+            );
+
+            let likes_num = if channel.total_likes > 0 {
+                crate::youtube::clean_stat_number(&channel.total_likes.to_string())
+            } else {
+                "-".to_string()
+            };
+
+            let likes_galley = ui.fonts(|f| {
+                f.layout_no_wrap(likes_num.clone(), font_id, Color32::from_rgb(255, 228, 230))
+            });
+            let icon_w = 11.0_f32;
+
+            let delta_str = crate::youtube::format_compact_delta(delta_likes);
+            let (delta_galley, delta_color) = if !delta_str.is_empty() {
+                let color = if likes_increased {
+                    Color32::from_rgb(252, 165, 165)
+                } else {
+                    Color32::from_rgb(253, 186, 116)
+                };
+                (
+                    Some(ui.fonts(|f| f.layout_no_wrap(delta_str, delta_font, color))),
+                    color,
+                )
+            } else {
+                (None, Color32::TRANSPARENT)
+            };
+
+            let circle_w = if likes_increased { 8.0_f32 } else { 0.0_f32 };
+            let delta_w = delta_galley.as_ref().map_or(0.0, |g| g.size().x + 3.0);
+            let total_w = icon_w + item_gap + likes_galley.size().x + circle_w + delta_w;
+            let start_x = box_rect.center().x - total_w / 2.0;
+
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(start_x + icon_w / 2.0, box_rect.center().y),
+                Vec2::new(11.0, 9.5),
+            );
+            crate::icons::draw_like_icon(ui.painter(), icon_rect, Color32::from_rgb(251, 113, 133));
+
+            ui.painter().galley(
+                Pos2::new(
+                    start_x + icon_w + item_gap,
+                    box_rect.center().y - likes_galley.size().y / 2.0,
+                ),
+                likes_galley,
+                Color32::from_rgb(255, 228, 230),
+            );
+
+            let mut cur_x = start_x + icon_w + item_gap + total_w - circle_w - delta_w + 3.0;
+            if likes_increased {
+                let circle_pos = Pos2::new(cur_x + 2.5, box_rect.center().y);
+                ui.painter()
+                    .circle_filled(circle_pos, 2.5, Color32::from_rgb(239, 68, 68));
+                ui.painter().circle_stroke(
+                    circle_pos,
+                    2.5,
+                    Stroke::new(0.5_f32, Color32::from_rgb(254, 202, 202)),
+                );
+                cur_x += 8.0;
+            }
+
+            if let Some(galley) = delta_galley {
+                ui.painter().galley(
+                    Pos2::new(cur_x, box_rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    delta_color,
+                );
+            }
+
+            let tooltip = if let Some(init) = channel.initial_total_likes {
+                if delta_likes != 0 {
+                    format!(
+                        "Likes: {} | Since launch: {:+} (initial: {})",
+                        likes_num, delta_likes, init
+                    )
+                } else {
+                    format!("Likes: {}", likes_num)
+                }
+            } else {
+                format!("Likes: {}", likes_num)
+            };
+            box_resp.on_hover_text(tooltip);
+        }
+    }
+}
+
+fn export_channel_to_csv(channel: &ChannelData) -> Result<String, std::io::Error> {
+    let clean_handle = channel
+        .handle
+        .trim_start_matches('@')
+        .replace(['/', '\\', '?', '%', '*', ':', '|', '"', '<', '>'], "_");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    std::fs::create_dir_all("exports")?;
+    let filename = format!("exports/{}_export_{}.csv", clean_handle, now);
+
+    let db_opt = crate::db::Database::open().ok();
+    let cid: Option<String> = channel.channel_id.clone().or_else(|| {
+        db_opt.as_ref().and_then(|db| {
+            db.get_channel_by_handle(&channel.handle)
+                .ok()
+                .flatten()
+                .map(|c| c.channel_id)
+        })
+    });
+
+    let total_likes = if channel.total_likes > 0 {
+        channel.total_likes
+    } else if let (Some(db), Some(cid_ref)) = (&db_opt, &cid) {
+        db.get_channel_total_likes(cid_ref).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let total_comments = if channel.total_comments > 0 {
+        channel.total_comments
+    } else if let (Some(db), Some(cid_ref)) = (&db_opt, &cid) {
+        db.get_channel_total_comments(cid_ref).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let videos = if let (Some(db), Some(cid_ref)) = (&db_opt, &cid) {
+        db.get_all_videos(cid_ref).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let mut csv = String::new();
+    csv.push_str("# SocialCount Channel Export\n");
+    csv.push_str(&format!(
+        "# Channel Title: {}\n",
+        channel.title.replace('\n', " ")
+    ));
+    csv.push_str(&format!("# Handle: {}\n", channel.handle));
+    csv.push_str(&format!(
+        "# Channel ID: {}\n",
+        cid.as_deref().unwrap_or("N/A")
+    ));
+    csv.push_str(&format!("# Subscribers: {}\n", channel.subscriber_count));
+    csv.push_str(&format!("# Total Views: {}\n", channel.views_count));
+    csv.push_str(&format!("# Total Videos: {}\n", channel.video_count));
+    csv.push_str(&format!("# Tracked Likes: {}\n", total_likes));
+    csv.push_str(&format!("# Tracked Comments: {}\n", total_comments));
+    csv.push_str(&format!("# Exported At (Unix): {}\n", now));
+    csv.push('\n');
+    csv.push_str("Video ID,Type,Title,Published Date,Views,Likes,Comments,Last Comment Date,URL\n");
+
+    for v in videos {
+        let v_type = if v.is_short_video() { "Short" } else { "Video" };
+        let escaped_title = v.title.replace('"', "\"\"").replace('\n', " ");
+        let pub_date = format_unix_timestamp(v.published_at);
+        let last_comm_date = if v.last_comment_at > 0 {
+            format_unix_timestamp(v.last_comment_at)
+        } else {
+            String::new()
+        };
+        let url = if v.is_short_video() {
+            format!("https://www.youtube.com/shorts/{}", v.video_id)
+        } else {
+            format!("https://www.youtube.com/watch?v={}", v.video_id)
+        };
+        csv.push_str(&format!(
+            "\"{}\",\"{}\",\"{}\",\"{}\",{},{},{},\"{}\",\"{}\"\n",
+            v.video_id,
+            v_type,
+            escaped_title,
+            pub_date,
+            v.views,
+            v.likes,
+            v.comments,
+            last_comm_date,
+            url
+        ));
+    }
+
+    std::fs::write(&filename, csv)?;
+    let _ = open::that(&filename);
+    Ok(filename)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4366,6 +5002,8 @@ mod tests {
             is_short,
             last_comment_at: 0,
             last_comment_count_checked: 0,
+            last_comment_author: String::new(),
+            last_comment_text: String::new(),
         }
     }
 

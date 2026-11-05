@@ -34,6 +34,25 @@ pub struct Config {
 
     #[serde(skip)]
     pub effective_api_key: Option<String>,
+
+    #[serde(default = "default_true")]
+    pub show_subscribers: bool,
+
+    #[serde(default = "default_true")]
+    pub show_views: bool,
+
+    #[serde(default = "default_true")]
+    pub show_videos: bool,
+
+    #[serde(default = "default_true")]
+    pub show_comments: bool,
+
+    #[serde(default = "default_true")]
+    pub show_likes: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_channels() -> Vec<String> {
@@ -71,6 +90,11 @@ impl Default for Config {
             window_height: default_window_height(),
             youtube_api_key: None,
             effective_api_key: None,
+            show_subscribers: true,
+            show_views: true,
+            show_videos: true,
+            show_comments: true,
+            show_likes: true,
         };
         cfg.resolve_effective_api_key();
         cfg
@@ -160,6 +184,13 @@ compact_mode = {compact}
 # Window dimensions (width and height in logical pixels)
 window_width = {width:.1}
 window_height = {height:.1}
+
+# Displayed metrics (set to false to hide in cards and widgets)
+show_subscribers = {show_subscribers}
+show_views = {show_views}
+show_videos = {show_videos}
+show_comments = {show_comments}
+show_likes = {show_likes}
 "#,
             channels_formatted = channels_formatted,
             api_key_line = api_key_line,
@@ -168,6 +199,11 @@ window_height = {height:.1}
             compact = self.compact_mode,
             width = self.window_width.max(200.0),
             height = self.window_height.max(50.0),
+            show_subscribers = self.show_subscribers,
+            show_views = self.show_views,
+            show_videos = self.show_videos,
+            show_comments = self.show_comments,
+            show_likes = self.show_likes,
         );
         fs::write(path, content)
     }

@@ -255,3 +255,31 @@ pub fn draw_sort_arrow(painter: &Painter, center: Pos2, ascending: bool, color: 
         painter.line_segment([p1, p2], stroke);
     }
 }
+
+/// Draws vector heart / like icon
+pub fn draw_like_icon(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.3_f32, color);
+    let fill_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 75);
+    let center = rect.center();
+    let w = rect.width() * 0.72;
+    let h = rect.height() * 0.68;
+
+    let r = w * 0.25;
+    let left_center = Pos2::new(center.x - r, center.y - h * 0.12);
+    let right_center = Pos2::new(center.x + r, center.y - h * 0.12);
+    painter.circle_filled(left_center, r, fill_color);
+    painter.circle_filled(right_center, r, fill_color);
+    painter.circle_stroke(left_center, r, stroke);
+    painter.circle_stroke(right_center, r, stroke);
+
+    let bottom = Pos2::new(center.x, center.y + h * 0.46);
+    let p_left = Pos2::new(center.x - w * 0.48, center.y - h * 0.08);
+    let p_right = Pos2::new(center.x + w * 0.48, center.y - h * 0.08);
+    painter.add(egui::Shape::convex_polygon(
+        vec![p_left, bottom, p_right],
+        fill_color,
+        Stroke::NONE,
+    ));
+    painter.line_segment([p_left, bottom], stroke);
+    painter.line_segment([bottom, p_right], stroke);
+}

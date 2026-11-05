@@ -17,5 +17,12 @@ card_opacity = 190
 compact_mode = false
 
 # Window dimensions (width and height in logical pixels)
-window_width = 360.0
-window_height = 440.0
+window_width = 832.7
+window_height = 530.0
+
+# Displayed metrics (set to false to hide in cards and widgets)
+show_subscribers = true
+show_views = true
+show_videos = true
+show_comments = true
+show_likes = true
