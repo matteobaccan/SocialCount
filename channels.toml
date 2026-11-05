@@ -4,6 +4,9 @@ channels = [
     "@matteobaccan"
 ]
 
+# Optional YouTube Data API v3 key (leave commented to use public HTML scraping)
+# youtube_api_key = "YOUR_YOUTUBE_DATA_API_KEY"
+
 # Automatic refresh interval in seconds (default: 300 = 5 minutes)
 refresh_interval_secs = 300
 

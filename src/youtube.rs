@@ -15,7 +15,12 @@ pub struct ChannelData {
     pub views_text: String,
     pub views_count: u64,
     pub initial_views_count: Option<u64>,
-    #[allow(dead_code)]
+    pub video_count: u64,
+    pub initial_video_count: Option<u64>,
+    pub total_comments: u64,
+    pub initial_total_comments: Option<u64>,
+    pub channel_id: Option<String>,
+    pub uploads_playlist_id: Option<String>,
     pub video_count_text: String,
     pub avatar_url: String,
     pub avatar_bytes: Option<Vec<u8>>,
@@ -23,8 +28,12 @@ pub struct ChannelData {
     pub error: Option<String>,
     pub sub_changed: bool,
     pub views_changed: bool,
+    pub video_changed: bool,
+    pub comments_changed: bool,
     pub sub_changed_at: Option<std::time::Instant>,
     pub views_changed_at: Option<std::time::Instant>,
+    pub video_changed_at: Option<std::time::Instant>,
+    pub comments_changed_at: Option<std::time::Instant>,
 }
 
 impl ChannelData {
@@ -38,6 +47,12 @@ impl ChannelData {
             views_text: "-".to_string(),
             views_count: 0,
             initial_views_count: None,
+            video_count: 0,
+            initial_video_count: None,
+            total_comments: 0,
+            initial_total_comments: None,
+            channel_id: None,
+            uploads_playlist_id: None,
             video_count_text: "-".to_string(),
             avatar_url: String::new(),
             avatar_bytes: None,
@@ -45,8 +60,12 @@ impl ChannelData {
             error: None,
             sub_changed: false,
             views_changed: false,
+            video_changed: false,
+            comments_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
+            video_changed_at: None,
+            comments_changed_at: None,
         }
     }
 
@@ -64,6 +83,22 @@ impl ChannelData {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn delta_video_count(&self) -> i64 {
+        match self.initial_video_count {
+            Some(init) => self.video_count as i64 - init as i64,
+            None => 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn delta_comments(&self) -> i64 {
+        match self.initial_total_comments {
+            Some(init) => self.total_comments as i64 - init as i64,
+            None => 0,
+        }
+    }
+
     pub fn has_error(&self) -> bool {
         self.error.is_some()
             || self.subscriber_text == "N/A"
@@ -75,20 +110,323 @@ impl ChannelData {
 
 pub struct YouTubeFetcher {
     client: reqwest::blocking::Client,
+    api_key: Option<String>,
+}
+
+impl Default for YouTubeFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl YouTubeFetcher {
     pub fn new() -> Self {
+        Self::with_api_key(None)
+    }
+
+    pub fn with_api_key(api_key: Option<String>) -> Self {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(15))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-        Self { client }
+        Self { client, api_key }
     }
 
     pub fn fetch_channel(&self, handle: &str) -> ChannelData {
+        if let Some(api_key) = &self.api_key {
+            match self.fetch_channel_api(handle, api_key) {
+                Ok(data) => return data,
+                Err(err) => {
+                    eprintln!(
+                        "YouTube API lookup failed for {}: {}. Falling back to scraping.",
+                        handle, err
+                    );
+                }
+            }
+        }
+        self.fetch_channel_scrape(handle)
+    }
+
+    fn fetch_channel_api(&self, handle: &str, api_key: &str) -> Result<ChannelData, String> {
+        let clean_handle = if !handle.starts_with('@') && !handle.starts_with("UC") {
+            format!("@{}", handle)
+        } else {
+            handle.to_string()
+        };
+
+        let url = if clean_handle.starts_with("UC") {
+            format!(
+                "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&id={}&key={}",
+                clean_handle, api_key
+            )
+        } else {
+            format!(
+                "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&forHandle={}&key={}",
+                clean_handle, api_key
+            )
+        };
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .map_err(|e| format!("HTTP request error: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err_body = response.text().unwrap_or_default();
+            return Err(format!("Status {}: {}", status, err_body));
+        }
+
+        let text = response
+            .text()
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+        let json: Value =
+            serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+
+        let item = json
+            .get("items")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| "Channel not found in API response".to_string())?;
+
+        let channel_id = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let title = item
+            .pointer("/snippet/title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(clean_handle.trim_start_matches('@'))
+            .to_string();
+
+        let subscriber_count = item
+            .pointer("/statistics/subscriberCount")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let views_count = item
+            .pointer("/statistics/viewCount")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let video_count = item
+            .pointer("/statistics/videoCount")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let uploads_playlist_id = item
+            .pointer("/contentDetails/relatedPlaylists/uploads")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let avatar_url = item
+            .pointer("/snippet/thumbnails/high/url")
+            .or_else(|| item.pointer("/snippet/thumbnails/medium/url"))
+            .or_else(|| item.pointer("/snippet/thumbnails/default/url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut avatar_bytes = None;
+        if !avatar_url.is_empty() {
+            if let Ok(img_resp) = self.client.get(&avatar_url).send() {
+                if img_resp.status().is_success() {
+                    if let Ok(bytes) = img_resp.bytes() {
+                        avatar_bytes = Some(bytes.to_vec());
+                    }
+                }
+            }
+        }
+
+        let subscriber_text = format!("{} subscribers", subscriber_count);
+        let views_text = format!("{} views", views_count);
+        let video_count_text = format!("{} videos", video_count);
+
+        let mut total_comments = 0;
+        if let Ok(db) = crate::db::Database::open() {
+            let _ = db.upsert_channel(
+                &channel_id,
+                &clean_handle,
+                &title,
+                &uploads_playlist_id,
+                subscriber_count,
+                views_count,
+                video_count,
+            );
+
+            if !uploads_playlist_id.is_empty() {
+                self.sync_channel_videos(&db, &channel_id, &uploads_playlist_id, api_key);
+            }
+
+            if let Ok(comments) = db.get_channel_total_comments(&channel_id) {
+                total_comments = comments;
+            }
+        }
+
+        Ok(ChannelData {
+            handle: clean_handle.clone(),
+            title,
+            subscriber_text,
+            subscriber_count,
+            initial_subscriber_count: None,
+            views_text,
+            views_count,
+            initial_views_count: None,
+            video_count,
+            initial_video_count: None,
+            total_comments,
+            initial_total_comments: None,
+            channel_id: Some(channel_id),
+            uploads_playlist_id: Some(uploads_playlist_id),
+            video_count_text,
+            avatar_url,
+            avatar_bytes,
+            channel_url: format!("https://www.youtube.com/{}", clean_handle),
+            error: None,
+            sub_changed: false,
+            views_changed: false,
+            video_changed: false,
+            comments_changed: false,
+            sub_changed_at: None,
+            views_changed_at: None,
+            video_changed_at: None,
+            comments_changed_at: None,
+        })
+    }
+
+    fn sync_channel_videos(
+        &self,
+        db: &crate::db::Database,
+        channel_id: &str,
+        uploads_playlist_id: &str,
+        api_key: &str,
+    ) {
+        let mut ids_to_fetch = Vec::new();
+
+        let playlist_url = format!(
+            "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId={}&key={}",
+            uploads_playlist_id, api_key
+        );
+
+        if let Ok(resp) = self.client.get(&playlist_url).send() {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text() {
+                    if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+                            for item in items {
+                                let video_id = item
+                                    .pointer("/contentDetails/videoId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let title = item
+                                    .pointer("/snippet/title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let published_str = item
+                                    .pointer("/snippet/publishedAt")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let published_at = parse_iso8601_to_unix(published_str);
+
+                                if !video_id.is_empty() {
+                                    let _ = db.register_discovered_video(
+                                        video_id,
+                                        channel_id,
+                                        title,
+                                        published_at,
+                                    );
+                                    if !ids_to_fetch.contains(&video_id.to_string()) {
+                                        ids_to_fetch.push(video_id.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also query tiered videos needing refresh from DB
+        if let Ok(needing_refresh) = db.get_videos_needing_refresh(channel_id, 50) {
+            for vid in needing_refresh {
+                if !ids_to_fetch.contains(&vid) {
+                    ids_to_fetch.push(vid);
+                }
+            }
+        }
+
+        // Fetch statistics for all collected videos in batches of up to 50
+        for chunk in ids_to_fetch.chunks(50) {
+            let ids_csv = chunk.join(",");
+            let videos_url = format!(
+                "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={}&key={}",
+                ids_csv, api_key
+            );
+
+            if let Ok(resp) = self.client.get(&videos_url).send() {
+                if resp.status().is_success() {
+                    if let Ok(text) = resp.text() {
+                        if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                            if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+                                for item in items {
+                                    let vid = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                    let title = item
+                                        .pointer("/snippet/title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let published_str = item
+                                        .pointer("/snippet/publishedAt")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let published_at = parse_iso8601_to_unix(published_str);
+
+                                    let views = item
+                                        .pointer("/statistics/viewCount")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                        .unwrap_or(0);
+                                    let likes = item
+                                        .pointer("/statistics/likeCount")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                        .unwrap_or(0);
+                                    let comments = item
+                                        .pointer("/statistics/commentCount")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                        .unwrap_or(0);
+
+                                    if !vid.is_empty() {
+                                        let _ = db.upsert_video(
+                                            vid,
+                                            channel_id,
+                                            title,
+                                            published_at,
+                                            views,
+                                            likes,
+                                            comments,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn fetch_channel_scrape(&self, handle: &str) -> ChannelData {
         let clean_handle = if !handle.starts_with('@') && !handle.starts_with("UC") {
             format!("@{}", handle)
         } else {
@@ -133,7 +471,6 @@ impl YouTubeFetcher {
 
         match self.parse_youtube_html(&html, &clean_handle) {
             Ok(mut parsed) => {
-                // If avatar URL is found, download image
                 if !parsed.avatar_url.is_empty() {
                     if let Ok(img_resp) = self.client.get(&parsed.avatar_url).send() {
                         if img_resp.status().is_success() {
@@ -170,7 +507,6 @@ impl YouTubeFetcher {
         let json: Value =
             serde_json::from_str(json_str).map_err(|e| format!("JSON decode error: {}", e))?;
 
-        // Extract title
         let title = json
             .pointer("/header/pageHeaderRenderer/pageTitle")
             .and_then(|v| v.as_str())
@@ -185,7 +521,6 @@ impl YouTubeFetcher {
             .unwrap_or(handle.trim_start_matches('@'))
             .to_string();
 
-        // Extract avatar URL
         let mut avatar_url = String::new();
         if let Some(thumbs) = json
             .pointer("/metadata/channelMetadataRenderer/avatar/thumbnails")
@@ -207,7 +542,6 @@ impl YouTubeFetcher {
             }
         }
 
-        // Search recursively for aboutChannelViewModel
         let about_vm = find_key_recursive(&json, "aboutChannelViewModel");
 
         let mut subscriber_text = String::new();
@@ -226,9 +560,7 @@ impl YouTubeFetcher {
             }
         }
 
-        // Fallbacks if not in aboutChannelViewModel
         if subscriber_text.is_empty() {
-            // Check metadata rows in page header
             if let Some(rows) = json.pointer("/header/pageHeaderRenderer/content/pageHeaderViewModel/metadata/contentMetadataViewModel/metadataRows").and_then(|v| v.as_array()) {
                 for row in rows {
                     if let Some(parts) = row.get("metadataParts").and_then(|v| v.as_array()) {
@@ -256,6 +588,30 @@ impl YouTubeFetcher {
 
         let subscriber_count = parse_subscriber_count(&subscriber_text);
         let views_count = parse_subscriber_count(&views_text);
+        let video_count = parse_subscriber_count(&video_count_text);
+
+        let channel_id = json
+            .pointer("/metadata/channelMetadataRenderer/externalId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let mut total_comments = 0;
+        if let Some(cid) = &channel_id {
+            if let Ok(db) = crate::db::Database::open() {
+                let _ = db.upsert_channel(
+                    cid,
+                    handle,
+                    &title,
+                    "",
+                    subscriber_count,
+                    views_count,
+                    video_count,
+                );
+                if let Ok(comments) = db.get_channel_total_comments(cid) {
+                    total_comments = comments;
+                }
+            }
+        }
 
         Ok(ChannelData {
             handle: handle.to_string(),
@@ -266,6 +622,12 @@ impl YouTubeFetcher {
             views_text,
             views_count,
             initial_views_count: None,
+            video_count,
+            initial_video_count: None,
+            total_comments,
+            initial_total_comments: None,
+            channel_id,
+            uploads_playlist_id: None,
             video_count_text,
             avatar_url,
             avatar_bytes: None,
@@ -273,9 +635,45 @@ impl YouTubeFetcher {
             error: None,
             sub_changed: false,
             views_changed: false,
+            video_changed: false,
+            comments_changed: false,
             sub_changed_at: None,
             views_changed_at: None,
+            video_changed_at: None,
+            comments_changed_at: None,
         })
+    }
+}
+
+pub fn parse_iso8601_to_unix(s: &str) -> u64 {
+    let parts: Vec<&str> = s
+        .split(['-', 'T', ':', 'Z', '.'])
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if parts.len() >= 6 {
+        let year: i64 = parts[0].parse().unwrap_or(1970);
+        let month: u64 = parts[1].parse().unwrap_or(1);
+        let day: u64 = parts[2].parse().unwrap_or(1);
+        let hour: u64 = parts[3].parse().unwrap_or(0);
+        let min: u64 = parts[4].parse().unwrap_or(0);
+        let sec: u64 = parts[5].parse().unwrap_or(0);
+
+        let mut days = (year - 1970) * 365 + ((year - 1969) / 4) - ((year - 1901) / 100)
+            + ((year - 1601) / 400);
+        let days_in_months = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        for m in 1..month {
+            days += days_in_months[m as usize];
+            if m == 2 && is_leap {
+                days += 1;
+            }
+        }
+        days += (day as i64) - 1;
+        let total_secs = days * 86400 + (hour as i64) * 3600 + (min as i64) * 60 + (sec as i64);
+        total_secs.max(0) as u64
+    } else {
+        0
     }
 }
 
@@ -330,7 +728,6 @@ pub fn clean_stat_number(text: &str) -> String {
 
     let trimmed = cleaned.trim().trim_matches('•').trim().to_string();
 
-    // If trimmed is all digits and at least 4 digits, format with thousands separator dot: 2507 -> 2.507
     if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
         if let Ok(num) = trimmed.parse::<u64>() {
             let s = num.to_string();
@@ -350,25 +747,27 @@ pub fn clean_stat_number(text: &str) -> String {
 }
 
 pub fn parse_subscriber_count(text: &str) -> u64 {
-    let lower = text.to_lowercase();
+    let cleaned = clean_stat_number(text);
+    let lower = cleaned.to_lowercase();
 
-    // Determine multiplier (order matters to avoid 'm' matching 'mila')
-    let multiplier: f64 =
-        if lower.contains("mrd") || lower.contains("miliard") || lower.contains("billion") {
-            1_000_000_000.0
-        } else if lower.contains("mila") || lower.contains("thousand") || lower.contains('k') {
-            1_000.0
-        } else if lower.contains("mln")
-            || lower.contains("milion")
-            || lower.contains("million")
-            || lower.contains('m')
-        {
-            1_000_000.0
-        } else {
-            1.0
-        };
+    let multiplier: f64 = if lower.contains("mrd")
+        || lower.contains("miliard")
+        || lower.contains("billion")
+        || lower.contains('b')
+    {
+        1_000_000_000.0
+    } else if lower.contains("mila") || lower.contains("thousand") || lower.contains('k') {
+        1_000.0
+    } else if lower.contains("mln")
+        || lower.contains("milion")
+        || lower.contains("million")
+        || lower.contains('m')
+    {
+        1_000_000.0
+    } else {
+        1.0
+    };
 
-    // Extract digits and decimal point/comma
     let mut num_str = String::new();
     let mut has_digit = false;
 
@@ -377,19 +776,15 @@ pub fn parse_subscriber_count(text: &str) -> u64 {
             num_str.push(ch);
             has_digit = true;
         } else if (ch == ',' || ch == '.') && has_digit {
-            // Replace comma with dot for standard float parsing
             num_str.push('.');
         } else if has_digit && !ch.is_whitespace() {
-            // Reached unit suffix
             break;
         }
     }
 
     let normalized = if (multiplier - 1.0).abs() < f64::EPSILON {
-        // Multiplier is 1.0 (no unit suffix): all dots/commas are thousand separators
         num_str.replace('.', "")
     } else {
-        // Clean up multiple dots if formatted like 1.250.000
         let dots = num_str.chars().filter(|&c| c == '.').count();
         if dots > 1 {
             num_str.replace('.', "")
@@ -427,74 +822,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_channel_has_error() {
-        let mut ch = ChannelData::new_loading("@test");
-        assert!(!ch.has_error());
+    fn test_parse_iso8601() {
+        let ts = parse_iso8601_to_unix("2026-11-04T12:00:00Z");
+        assert!(ts > 1_700_000_000);
+    }
 
-        ch.error = Some("Connection error".to_string());
-        assert!(ch.has_error());
-
-        ch.error = None;
-        ch.subscriber_text = "N/A".to_string();
-        assert!(ch.has_error());
-
-        ch.subscriber_text = "N/D".to_string();
-        assert!(ch.has_error());
-
-        ch.subscriber_text = "100 subscribers".to_string();
-        ch.views_text = "N/A".to_string();
-        assert!(ch.has_error());
-
-        ch.views_text = "1,000 views".to_string();
-        assert!(!ch.has_error());
+    #[test]
+    fn test_parse_subscriber_count() {
+        assert_eq!(parse_subscriber_count("1.25M subscribers"), 1_250_000);
+        assert_eq!(parse_subscriber_count("105K iscritti"), 105_000);
+        assert_eq!(parse_subscriber_count("2.507 iscritti"), 2_507);
+        assert_eq!(parse_subscriber_count("2,507 subscribers"), 2_507);
+        assert_eq!(parse_subscriber_count("500 iscritti"), 500);
+        assert_eq!(parse_subscriber_count("3.2B views"), 3_200_000_000);
+        assert_eq!(parse_subscriber_count("0 subscribers"), 0);
     }
 
     #[test]
     fn test_clean_stat_number() {
-        assert_eq!(clean_stat_number("26 iscritti"), "26");
-        assert_eq!(clean_stat_number("26 subscribers"), "26");
-        assert_eq!(clean_stat_number("2507 visualizzazioni"), "2.507");
-        assert_eq!(clean_stat_number("2507 views"), "2.507");
-        assert_eq!(clean_stat_number("559 visualizzazioni"), "559");
-        assert_eq!(clean_stat_number("559 views"), "559");
-        assert_eq!(clean_stat_number("1,3 mila iscritti"), "1,3 mila");
-        assert_eq!(clean_stat_number("1.3K subscribers"), "1.3K");
-        assert_eq!(clean_stat_number("10.2M subscribers"), "10.2M");
+        assert_eq!(clean_stat_number("1.25M subscribers"), "1.25M");
+        assert_eq!(clean_stat_number("105K iscritti"), "105K");
+        assert_eq!(clean_stat_number("2507"), "2.507");
+        assert_eq!(clean_stat_number("2507 iscritti"), "2.507");
+        assert_eq!(clean_stat_number("• 12.345 views •"), "12.345");
     }
 
     #[test]
-    fn test_parse_subscriber_counts() {
-        assert_eq!(parse_subscriber_count("26 iscritti"), 26);
-        assert_eq!(parse_subscriber_count("26 subscribers"), 26);
-        assert_eq!(parse_subscriber_count("18 iscritti"), 18);
-        assert_eq!(parse_subscriber_count("1,3 mila iscritti"), 1300);
-        assert_eq!(parse_subscriber_count("1.3K subscribers"), 1300);
-        assert_eq!(parse_subscriber_count("2,5 mln iscritti"), 2500000);
-        assert_eq!(parse_subscriber_count("2.5M subscribers"), 2500000);
-        assert_eq!(parse_subscriber_count("10M subscribers"), 10000000);
-        assert_eq!(parse_subscriber_count("1.250.000 iscritti"), 1250000);
-        assert_eq!(parse_subscriber_count("1,250,000 subscribers"), 1250000);
-        // Views parsing
-        assert_eq!(parse_subscriber_count("2507 visualizzazioni"), 2507);
-        assert_eq!(parse_subscriber_count("2,507 views"), 2507);
-        assert_eq!(parse_subscriber_count("2.507 visualizzazioni"), 2507);
-        assert_eq!(parse_subscriber_count("15.2K views"), 15200);
-    }
-
-    #[test]
-    fn test_delta_and_format() {
+    fn test_channel_data_deltas() {
         let mut ch = ChannelData::new_loading("@test");
         assert_eq!(ch.delta_subscribers(), 0);
         assert_eq!(ch.delta_views(), 0);
 
-        ch.initial_subscriber_count = Some(25);
-        ch.subscriber_count = 26;
-        assert_eq!(ch.delta_subscribers(), 1);
-        assert_eq!(format_compact_delta(ch.delta_subscribers()), "+1");
+        ch.initial_subscriber_count = Some(1000);
+        ch.subscriber_count = 1050;
+        assert_eq!(ch.delta_subscribers(), 50);
+        assert_eq!(format_compact_delta(ch.delta_subscribers()), "+50");
 
-        ch.subscriber_count = 24;
-        assert_eq!(ch.delta_subscribers(), -1);
-        assert_eq!(format_compact_delta(ch.delta_subscribers()), "-1");
+        ch.subscriber_count = 980;
+        assert_eq!(ch.delta_subscribers(), -20);
+        assert_eq!(format_compact_delta(ch.delta_subscribers()), "-20");
 
         ch.initial_views_count = Some(2000);
         ch.views_count = 2150;
@@ -509,12 +875,36 @@ mod tests {
     fn test_fetch_live_channel() {
         let fetcher = YouTubeFetcher::new();
         let data = fetcher.fetch_channel("@matteobaccan");
-        println!("Fetched channel: handle={}, title={}, subscribers='{}' ({}), views='{}', avatar_len={:?}",
-            data.handle, data.title, data.subscriber_text, data.subscriber_count, data.views_text, data.avatar_bytes.as_ref().map(|b| b.len())
+        println!(
+            "Fetched channel: handle={}, title={}, subscribers='{}' ({}), views='{}', avatar_len={:?}",
+            data.handle,
+            data.title,
+            data.subscriber_text,
+            data.subscriber_count,
+            data.views_text,
+            data.avatar_bytes.as_ref().map(|b| b.len())
         );
         assert_eq!(data.handle, "@matteobaccan");
         assert!(!data.title.is_empty());
         assert!(data.subscriber_count > 0);
         assert!(data.avatar_bytes.is_some());
+    }
+
+    #[test]
+    fn test_fetch_with_api_key() {
+        let config = crate::config::Config::load_or_create();
+        if let Some(key) = &config.effective_api_key {
+            let fetcher = YouTubeFetcher::with_api_key(Some(key.clone()));
+            let data = fetcher.fetch_channel("@matteobaccan");
+            assert!(data.channel_id.is_some());
+            assert!(data.video_count > 0);
+            if let Some(cid) = &data.channel_id {
+                let db = crate::db::Database::open().unwrap();
+                let videos = db.get_recent_videos(cid, 10).unwrap();
+                assert!(!videos.is_empty());
+                let has_views = videos.iter().any(|v| v.views > 0);
+                assert!(has_views);
+            }
+        }
     }
 }

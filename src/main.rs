@@ -6,6 +6,7 @@
 
 mod app;
 mod config;
+mod db;
 mod icons;
 mod youtube;
 
@@ -16,8 +17,8 @@ use eframe::egui;
 fn main() -> eframe::Result<()> {
     let config = Config::load_or_create();
     let initial_size = if config.compact_mode {
-        let compact_h = (20.0 + config.channels.len() as f32 * 36.0).clamp(54.0, 450.0);
-        egui::Vec2::new(205.0, compact_h)
+        let compact_h = (22.0 + config.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
+        egui::Vec2::new(215.0, compact_h)
     } else {
         egui::Vec2::new(
             config.window_width.max(280.0),

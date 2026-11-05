@@ -173,3 +173,63 @@ pub fn draw_gear_icon(painter: &Painter, center: Pos2, radius: f32, color: Color
     painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
     painter.circle_filled(center, radius * 0.38_f32, Color32::from_rgb(18, 20, 28));
 }
+
+/// Draws vector video camera icon
+pub fn draw_video_icon(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.4_f32, color);
+    let center = rect.center();
+    let body_w = rect.width() * 0.54;
+    let body_h = rect.height() * 0.56;
+    let body_rect = Rect::from_center_size(
+        Pos2::new(center.x - rect.width() * 0.12, center.y),
+        Vec2::new(body_w, body_h),
+    );
+    let fill_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 65);
+    painter.rect_filled(body_rect, 3.0_f32, fill_color);
+    painter.rect_stroke(body_rect, 3.0_f32, stroke);
+
+    // Lens trapezoid on the right
+    let p0 = Pos2::new(body_rect.right(), center.y - body_h * 0.28);
+    let p1 = Pos2::new(center.x + rect.width() * 0.42, center.y - body_h * 0.48);
+    let p2 = Pos2::new(center.x + rect.width() * 0.42, center.y + body_h * 0.48);
+    let p3 = Pos2::new(body_rect.right(), center.y + body_h * 0.28);
+    painter.add(egui::Shape::convex_polygon(
+        vec![p0, p1, p2, p3],
+        fill_color,
+        stroke,
+    ));
+}
+
+/// Draws vector speech / comment bubble icon
+pub fn draw_comment_icon(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.4_f32, color);
+    let center = rect.center();
+    let bubble_w = rect.width() * 0.76;
+    let bubble_h = rect.height() * 0.56;
+    let bubble_rect = Rect::from_center_size(
+        Pos2::new(center.x, center.y - rect.height() * 0.08),
+        Vec2::new(bubble_w, bubble_h),
+    );
+    let fill_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 65);
+    painter.rect_filled(bubble_rect, 3.5_f32, fill_color);
+    painter.rect_stroke(bubble_rect, 3.5_f32, stroke);
+
+    // Tail at bottom left
+    let t0 = Pos2::new(
+        bubble_rect.left() + bubble_w * 0.22,
+        bubble_rect.bottom() - 1.0,
+    );
+    let t1 = Pos2::new(
+        bubble_rect.left() + bubble_w * 0.10,
+        center.y + rect.height() * 0.44,
+    );
+    let t2 = Pos2::new(
+        bubble_rect.left() + bubble_w * 0.48,
+        bubble_rect.bottom() - 1.0,
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![t0, t1, t2],
+        fill_color,
+        stroke,
+    ));
+}

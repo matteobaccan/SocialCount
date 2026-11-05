@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 pub const CONFIG_FILENAME: &str = "channels.toml";
+pub const SECRETS_FILENAME: &str = "secrets.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -27,6 +28,12 @@ pub struct Config {
 
     #[serde(default = "default_window_height")]
     pub window_height: f32,
+
+    #[serde(default)]
+    pub youtube_api_key: Option<String>,
+
+    #[serde(skip)]
+    pub effective_api_key: Option<String>,
 }
 
 fn default_channels() -> Vec<String> {
@@ -55,18 +62,67 @@ fn default_window_height() -> f32 {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
+        let mut cfg = Self {
             channels: default_channels(),
             refresh_interval_secs: default_refresh_interval(),
             card_opacity: default_card_opacity(),
             compact_mode: default_compact_mode(),
             window_width: default_window_width(),
             window_height: default_window_height(),
-        }
+            youtube_api_key: None,
+            effective_api_key: None,
+        };
+        cfg.resolve_effective_api_key();
+        cfg
     }
 }
 
 impl Config {
+    pub fn resolve_effective_api_key(&mut self) {
+        let env_key = std::env::var("YOUTUBE_API_KEY").ok().and_then(|k| {
+            let trimmed = k.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+        let secrets_key = if Path::new(SECRETS_FILENAME).exists() {
+            fs::read_to_string(SECRETS_FILENAME)
+                .ok()
+                .and_then(|content| {
+                    #[derive(Deserialize)]
+                    struct Secrets {
+                        youtube_api_key: Option<String>,
+                    }
+                    toml::from_str::<Secrets>(&content).ok().and_then(|s| {
+                        s.youtube_api_key.and_then(|k| {
+                            let trimmed = k.trim().to_string();
+                            if trimmed.is_empty() {
+                                None
+                            } else {
+                                Some(trimmed)
+                            }
+                        })
+                    })
+                })
+        } else {
+            None
+        };
+
+        let config_key = self.youtube_api_key.as_ref().and_then(|k| {
+            let trimmed = k.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+        self.effective_api_key = env_key.or(secrets_key).or(config_key);
+    }
+
     pub fn save(&self) -> Result<(), std::io::Error> {
         let path = Path::new(CONFIG_FILENAME);
         let channels_formatted = self
@@ -76,6 +132,13 @@ impl Config {
             .collect::<Vec<_>>()
             .join(",\n");
 
+        let api_key_line = match &self.youtube_api_key {
+            Some(key) if !key.trim().is_empty() => {
+                format!("youtube_api_key = \"{}\"\n", key.trim())
+            }
+            _ => "# youtube_api_key = \"YOUR_YOUTUBE_DATA_API_KEY\"\n".to_string(),
+        };
+
         let content = format!(
             r#"# SocialCount configuration file
 # List of YouTube channels to monitor (handles with or without @)
@@ -83,6 +146,8 @@ channels = [
 {channels_formatted}
 ]
 
+# Optional YouTube Data API v3 key (leave commented to use public HTML scraping)
+{api_key_line}
 # Automatic refresh interval in seconds (default: 300 = 5 minutes)
 refresh_interval_secs = {refresh}
 
@@ -97,6 +162,7 @@ window_width = {width:.1}
 window_height = {height:.1}
 "#,
             channels_formatted = channels_formatted,
+            api_key_line = api_key_line,
             refresh = self.refresh_interval_secs,
             opacity = self.card_opacity,
             compact = self.compact_mode,
@@ -137,6 +203,7 @@ window_height = {height:.1}
                     if cfg.window_height < 50.0 {
                         cfg.window_height = 440.0;
                     }
+                    cfg.resolve_effective_api_key();
                     cfg
                 }
                 Err(err) => {
@@ -144,7 +211,9 @@ window_height = {height:.1}
                         "Error parsing {}: {}. Using default values.",
                         CONFIG_FILENAME, err
                     );
-                    Config::default()
+                    let mut default_cfg = Config::default();
+                    default_cfg.resolve_effective_api_key();
+                    default_cfg
                 }
             },
             Err(err) => {
@@ -152,7 +221,9 @@ window_height = {height:.1}
                     "Error reading {}: {}. Using default values.",
                     CONFIG_FILENAME, err
                 );
-                Config::default()
+                let mut default_cfg = Config::default();
+                default_cfg.resolve_effective_api_key();
+                default_cfg
             }
         }
     }

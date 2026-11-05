@@ -43,19 +43,26 @@
   - Crisp vector YouTube badge logo integrated into the header.
 - **Circular Channel Avatars**:
   - Channel profile pictures downloaded in the background, clipped to a perfect circle with anti-aliased edge masking and subtle highlight ring.
-- **Solid Stat Counter Pills (Zero Emojis)**:
-  - **Emerald Pill (Users / Subscribers)**: Vector user silhouette icon + clean formatted number.
-  - **Sapphire Pill (Views)**: Vector eye icon with pupil and catchlight highlight + clean formatted number.
-  - Equal width and responsive sizing matching window width.
+- **4 Live Counter Statistics (Zero Emojis)**:
+  - **Emerald Pill (Subscribers)**: Vector user silhouette icon + clean formatted count + real-time delta tracking (`+N`).
+  - **Sapphire Pill (Views)**: Vector eye icon with pupil highlight + formatted view count + delta since launch.
+  - **Purple Pill (Videos)**: Vector video camera icon + total uploaded video count + variation indicator.
+  - **Amber Pill (Comments)**: Vector speech bubble icon + cumulative comments sum tracked across recent uploads via SQLite.
+  - Equal width and responsive layout matching window width.
   - **100% solid & opaque counter pills** regardless of chosen background transparency, ensuring maximum contrast and legibility.
+- **Detailed Channel View & Recent Videos**:
+  - Click on any channel's avatar or the **Details** button to open a dedicated modal displaying full metrics and recent uploads (with individual views, likes, comments, and direct links to YouTube).
 - **Real-Time Change Detection**:
-  - Automatically highlights counter pills with a red border whenever a channel's subscriber or view count changes.
+  - Automatically highlights counter pills with animated markers and border accents whenever subscriber, view, video, or comment counts update.
 - **Automatic Sorting by Subscribers**: Channels are dynamically ordered by subscriber count in descending order.
 - **Continuous Opacity Slider**:
   - Adjust background opacity in real time from **0% (completely transparent)** to **100% opaque**. At 0% opacity, all cards and backgrounds vanish, leaving only the floating circular avatars and counter pills visible.
-- **Ultra-Compact Mode (Double-Click)**:
-  - **Double-click anywhere on the title bar** to instantly shrink into ultra-compact mode: header controls and footer fade away, showing only the centered avatar flanked by the two counter pills.
+- **Ultra-Compact Mode (Double-Click or `--compact`)**:
+  - **Double-click anywhere on the title bar** or run with `--compact` to shrink into an ultra-compact widget: displays the circular avatar on the left and a balanced 2x2 grid with all 4 counter pills on the right.
   - Double-click again to restore normal view.
+- **Dual Fetch Engine with SQLite Caching**:
+  - Optional **YouTube Data API v3** support for enriched video and comment stats with embedded SQLite tiered caching (`socialcount.db`).
+  - Automatic fallback to **public HTML scraping** when no API key is specified or when quota is exceeded (zero configuration required).
 - **Smooth Multi-Screen Dragging**:
   - Custom coordinate-based dragging with direct position updates and `SWP_NOSIZE`, preventing Aero Snap dockings or unwanted resizing/ballooning when dragged across monitors with different DPIs or resolutions.
 - **Full CRUD Profile Manager (Right-Click or Settings)**:
@@ -66,11 +73,9 @@
   - **Delete**: Remove channels from monitoring.
   - Automatically persists changes to `channels.toml` and spawns immediate background fetch workers.
 - **Sticky Footer with Timestamp**:
-  - Real-time pulsing live dot with the exact timestamp of the last successful refresh (e.g. `02/11/2026 10:45:12`).
+  - Real-time pulsing live dot with the exact timestamp of the last successful refresh (e.g. `04/11/2026 21:05:12`).
 - **Simple TOML Configuration (`channels.toml`)**:
   - Reads channels and settings from a lightweight configuration file editable on the fly without recompilation.
-- **Zero API Keys Required**:
-  - Public data extraction directly from YouTube via background worker threads.
 - **Direct Web Links**:
   - Click on any channel's name or avatar to open its YouTube page directly in your default browser.
 
@@ -110,6 +115,9 @@ channels = [
     "@matteobaccan"
 ]
 
+# Optional YouTube Data API v3 key (leave commented to use public HTML scraping)
+# youtube_api_key = "YOUR_YOUTUBE_DATA_API_KEY"
+
 # Automatic refresh interval in seconds (default: 300 = 5 minutes)
 refresh_interval_secs = 300
 
@@ -126,12 +134,78 @@ window_height = 440.0
 
 ---
 
+## <img src="assets/icons/shield.svg" width="22" height="22" valign="middle" alt="YouTube Data API Guide" /> YouTube Data API Key Guide
+
+SocialCount supports the official **YouTube Data API v3** for rich analytics, per-video statistics (views, likes, comments), and aggregated comment tracking stored in a local SQLite cache. When no key is configured, SocialCount automatically falls back to public HTML scraping.
+
+### Step 1: Create a Google Cloud Project
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Sign in with your Google account.
+3. In the top navigation bar, click the project dropdown and select **New Project**.
+4. Name your project (e.g., `SocialCount`) and click **Create**.
+
+### Step 2: Enable the YouTube Data API v3
+
+1. Make sure your newly created project is selected in the top bar.
+2. Open the navigation menu and go to **APIs & Services** > **Library**.
+3. Search for **YouTube Data API v3** and select it from the results list.
+4. Click **Enable**.
+
+### Step 3: Generate and Restrict Your API Key
+
+1. Navigate to **APIs & Services** > **Credentials**.
+2. Click **+ Create Credentials** at the top of the page and select **API key**.
+3. Copy the generated key string (starting with `AIzaSy...`).
+4. *(Recommended)* Click **Edit API key**:
+   - Under **API restrictions**, select **Restrict key**.
+   - In the dropdown, choose **YouTube Data API v3**.
+   - Click **Save**.
+
+### Step 4: Configure Your API Key in SocialCount
+
+SocialCount automatically detects and loads your key using the following priority resolution:
+
+#### Method 1: Local `secrets.toml` (Recommended for Development)
+Create a file named `secrets.toml` in the project root:
+
+```toml
+# SocialCount - Local Secrets (Ignored by Git)
+youtube_api_key = "AIzaSyYourGeneratedApiKeyHere"
+```
+
+> [!NOTE]
+> `secrets.toml` is included in `.gitignore` by default. Your personal key will never be committed or published to Git repositories.
+
+#### Method 2: Application Configuration (`channels.toml`)
+You can also place the key directly in `channels.toml`:
+
+```toml
+# Optional YouTube Data API v3 key
+youtube_api_key = "AIzaSyYourGeneratedApiKeyHere"
+```
+
+#### Method 3: Environment Variable
+Alternatively, export the key in your terminal or shell profile:
+
+```bash
+# Linux / macOS
+export YOUTUBE_API_KEY="AIzaSyYourGeneratedApiKeyHere"
+
+# Windows PowerShell
+$env:YOUTUBE_API_KEY="AIzaSyYourGeneratedApiKeyHere"
+```
+
+---
+
 ## <img src="assets/icons/folder.svg" width="22" height="22" valign="middle" alt="Project Structure" /> Project Structure
 
 ```
 SocialCount/
-├── Cargo.toml          # Rust package configuration and dependencies (eframe, egui, reqwest, serde, toml, image)
+├── Cargo.toml          # Rust package configuration and dependencies (eframe, egui, reqwest, rusqlite, serde, toml)
 ├── channels.toml       # Monitored YouTube channels and widget settings
+├── secrets.toml        # Optional local secret credentials (ignored by Git)
+├── socialcount.db      # Local SQLite database caching channel metrics and video statistics
 ├── LICENSE             # MIT License
 ├── README.md           # Project documentation
 ├── assets/             # Logo, social banner, vector SVG icons, and documentation screenshots
@@ -143,11 +217,13 @@ SocialCount/
 ├── examples/
 │   └── generate_assets.rs # Vector and raster graphic assets generator
 └── src/
-    ├── main.rs         # Application entry point and transparent borderless viewport configuration
-    ├── app.rs          # egui GUI implementation, responsive layout, CRUD profile manager, Win32 drag
-    ├── config.rs       # TOML configuration loading, normalization, and persistence
-    ├── icons.rs        # Pure vector rendering (YouTube badge, user silhouette, eye, live dot)
-    └── youtube.rs      # Background HTTP client, HTML parser, and subscriber counter extractor
+    ├── main.rs         # Application entry point, CLI parser, and viewport configuration
+    ├── app.rs          # egui GUI implementation, 4-counter views, details view, Win32 drag
+    ├── channels.rs     # Channel data structures and delta calculations
+    ├── config.rs       # TOML configuration and secrets resolution
+    ├── db.rs           # Embedded SQLite engine, video caching, and tiered polling queries
+    ├── icons.rs        # Pure vector rendering (YouTube badge, user, eye, video, comment, moon)
+    └── youtube.rs      # YouTube API v3 client, public HTML scraper fallback, and batch syncer
 ```
 
 ---
