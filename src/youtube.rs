@@ -339,11 +339,13 @@ impl YouTubeFetcher {
                                 let published_at = parse_iso8601_to_unix(published_str);
 
                                 if !video_id.is_empty() {
+                                    let is_short_guess = title.to_lowercase().contains("#short");
                                     let _ = db.register_discovered_video(
                                         video_id,
                                         channel_id,
                                         title,
                                         published_at,
+                                        is_short_guess,
                                     );
                                     if !ids_to_fetch.contains(&video_id.to_string()) {
                                         ids_to_fetch.push(video_id.to_string());
@@ -369,7 +371,7 @@ impl YouTubeFetcher {
         for chunk in ids_to_fetch.chunks(50) {
             let ids_csv = chunk.join(",");
             let videos_url = format!(
-                "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={}&key={}",
+                "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id={}&key={}",
                 ids_csv, api_key
             );
 
@@ -406,6 +408,57 @@ impl YouTubeFetcher {
                                         .and_then(|s| s.parse::<u64>().ok())
                                         .unwrap_or(0);
 
+                                    let duration_str = item
+                                        .pointer("/contentDetails/duration")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let duration_secs = parse_iso8601_duration(duration_str);
+                                    let title_lower = title.to_lowercase();
+                                    let is_short = (duration_secs > 0 && duration_secs <= 60)
+                                        || title_lower.contains("#short");
+
+                                    let cached = db.get_video(vid).ok().flatten();
+                                    let mut last_comment_at =
+                                        cached.as_ref().map(|v| v.last_comment_at).unwrap_or(0);
+                                    let mut last_comment_count_checked = cached
+                                        .as_ref()
+                                        .map(|v| v.last_comment_count_checked)
+                                        .unwrap_or(0);
+
+                                    // Only query commentThreads if comments > 0 and count changed or timestamp is missing
+                                    if comments > 0
+                                        && (last_comment_count_checked != comments
+                                            || last_comment_at == 0)
+                                    {
+                                        let comment_url = format!(
+                                            "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId={}&order=time&maxResults=1&key={}",
+                                            vid, api_key
+                                        );
+                                        if let Ok(c_resp) = self.client.get(&comment_url).send() {
+                                            if c_resp.status().is_success() {
+                                                if let Ok(c_text) = c_resp.text() {
+                                                    if let Ok(c_json) =
+                                                        serde_json::from_str::<Value>(&c_text)
+                                                    {
+                                                        if let Some(c_date) = c_json
+                                                            .pointer(
+                                                                "/items/0/snippet/topLevelComment/snippet/publishedAt",
+                                                            )
+                                                            .and_then(|v| v.as_str())
+                                                        {
+                                                            last_comment_at =
+                                                                parse_iso8601_to_unix(c_date);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        last_comment_count_checked = comments;
+                                    } else if comments == 0 {
+                                        last_comment_at = 0;
+                                        last_comment_count_checked = 0;
+                                    }
+
                                     if !vid.is_empty() {
                                         let _ = db.upsert_video(
                                             vid,
@@ -415,6 +468,9 @@ impl YouTubeFetcher {
                                             views,
                                             likes,
                                             comments,
+                                            is_short,
+                                            last_comment_at,
+                                            last_comment_count_checked,
                                         );
                                     }
                                 }
@@ -677,6 +733,49 @@ pub fn parse_iso8601_to_unix(s: &str) -> u64 {
     }
 }
 
+pub fn parse_iso8601_duration(duration: &str) -> u64 {
+    if !duration.starts_with('P') {
+        return 0;
+    }
+    let mut total_secs = 0u64;
+    let mut current_num = 0u64;
+    let mut in_time = false;
+
+    for ch in duration.chars() {
+        match ch {
+            'P' => {}
+            'T' => in_time = true,
+            '0'..='9' => {
+                current_num = current_num
+                    .saturating_mul(10)
+                    .saturating_add(ch as u64 - '0' as u64);
+            }
+            'D' => {
+                total_secs = total_secs.saturating_add(current_num.saturating_mul(86_400));
+                current_num = 0;
+            }
+            'H' => {
+                total_secs = total_secs.saturating_add(current_num.saturating_mul(3_600));
+                current_num = 0;
+            }
+            'M' => {
+                if in_time {
+                    total_secs = total_secs.saturating_add(current_num.saturating_mul(60));
+                } else {
+                    total_secs = total_secs.saturating_add(current_num.saturating_mul(86_400 * 30));
+                }
+                current_num = 0;
+            }
+            'S' => {
+                total_secs = total_secs.saturating_add(current_num);
+                current_num = 0;
+            }
+            _ => {}
+        }
+    }
+    total_secs
+}
+
 fn find_key_recursive<'a>(value: &'a Value, target_key: &str) -> Option<&'a Value> {
     match value {
         Value::Object(map) => {
@@ -825,6 +924,16 @@ mod tests {
     fn test_parse_iso8601() {
         let ts = parse_iso8601_to_unix("2026-11-04T12:00:00Z");
         assert!(ts > 1_700_000_000);
+    }
+
+    #[test]
+    fn test_parse_iso8601_duration() {
+        assert_eq!(parse_iso8601_duration("PT45S"), 45);
+        assert_eq!(parse_iso8601_duration("PT1M"), 60);
+        assert_eq!(parse_iso8601_duration("PT1M15S"), 75);
+        assert_eq!(parse_iso8601_duration("PT2H30M10S"), 9010);
+        assert_eq!(parse_iso8601_duration("P1DT2H"), 93600);
+        assert_eq!(parse_iso8601_duration("invalid"), 0);
     }
 
     #[test]

@@ -36,6 +36,24 @@ pub struct CachedVideo {
     pub likes: u64,
     pub comments: u64,
     pub last_checked_at: u64,
+    pub is_short: bool,
+    pub last_comment_at: u64,
+    pub last_comment_count_checked: u64,
+}
+
+impl CachedVideo {
+    pub fn is_short_video(&self) -> bool {
+        self.is_short || self.title.to_lowercase().contains("#short")
+    }
+
+    #[allow(dead_code)]
+    pub fn video_type_label(&self) -> &'static str {
+        if self.is_short_video() {
+            "Short"
+        } else {
+            "Video"
+        }
+    }
 }
 
 fn current_timestamp() -> u64 {
@@ -82,14 +100,17 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_channels_handle ON channels(handle);
 
             CREATE TABLE IF NOT EXISTS videos (
-                video_id         TEXT PRIMARY KEY,
-                channel_id       TEXT NOT NULL,
-                title            TEXT NOT NULL DEFAULT '',
-                published_at     INTEGER NOT NULL DEFAULT 0,
-                views            INTEGER NOT NULL DEFAULT 0,
-                likes            INTEGER NOT NULL DEFAULT 0,
-                comments         INTEGER NOT NULL DEFAULT 0,
-                last_checked_at  INTEGER NOT NULL DEFAULT 0,
+                video_id                    TEXT PRIMARY KEY,
+                channel_id                  TEXT NOT NULL,
+                title                       TEXT NOT NULL DEFAULT '',
+                published_at                INTEGER NOT NULL DEFAULT 0,
+                views                       INTEGER NOT NULL DEFAULT 0,
+                likes                       INTEGER NOT NULL DEFAULT 0,
+                comments                    INTEGER NOT NULL DEFAULT 0,
+                last_checked_at             INTEGER NOT NULL DEFAULT 0,
+                is_short                    INTEGER NOT NULL DEFAULT 0,
+                last_comment_at             INTEGER NOT NULL DEFAULT 0,
+                last_comment_count_checked  INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(channel_id) REFERENCES channels(channel_id)
             );
 
@@ -97,6 +118,18 @@ impl Database {
             ON videos(channel_id, published_at, last_checked_at);
             "#,
         )?;
+        let _ = self.conn.execute(
+            "ALTER TABLE videos ADD COLUMN is_short INTEGER NOT NULL DEFAULT 0;",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE videos ADD COLUMN last_comment_at INTEGER NOT NULL DEFAULT 0;",
+            [],
+        );
+        let _ = self.conn.execute(
+            "ALTER TABLE videos ADD COLUMN last_comment_count_checked INTEGER NOT NULL DEFAULT 0;",
+            [],
+        );
         Ok(())
     }
 
@@ -182,20 +215,23 @@ impl Database {
         channel_id: &str,
         title: &str,
         published_at: u64,
+        is_short: bool,
     ) -> Result<()> {
+        let is_short_val = if is_short { 1i64 } else { 0i64 };
         self.conn.execute(
             r#"
             INSERT INTO videos (
                 video_id, channel_id, title, published_at,
-                views, likes, comments, last_checked_at
+                views, likes, comments, last_checked_at, is_short
             )
-            VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0)
+            VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, ?5)
             ON CONFLICT(video_id) DO UPDATE SET
                 channel_id = excluded.channel_id,
                 title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
-                published_at = CASE WHEN excluded.published_at > 0 THEN excluded.published_at ELSE published_at END;
+                published_at = CASE WHEN excluded.published_at > 0 THEN excluded.published_at ELSE published_at END,
+                is_short = CASE WHEN excluded.is_short != 0 THEN excluded.is_short ELSE is_short END;
             "#,
-            params![video_id, channel_id, title, published_at as i64],
+            params![video_id, channel_id, title, published_at as i64, is_short_val],
         )?;
         Ok(())
     }
@@ -210,15 +246,20 @@ impl Database {
         views: u64,
         likes: u64,
         comments: u64,
+        is_short: bool,
+        last_comment_at: u64,
+        last_comment_count_checked: u64,
     ) -> Result<()> {
         let now = current_timestamp();
+        let is_short_val = if is_short { 1i64 } else { 0i64 };
         self.conn.execute(
             r#"
             INSERT INTO videos (
                 video_id, channel_id, title, published_at,
-                views, likes, comments, last_checked_at
+                views, likes, comments, last_checked_at, is_short,
+                last_comment_at, last_comment_count_checked
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(video_id) DO UPDATE SET
                 channel_id = excluded.channel_id,
                 title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
@@ -226,7 +267,10 @@ impl Database {
                 views = excluded.views,
                 likes = excluded.likes,
                 comments = excluded.comments,
-                last_checked_at = excluded.last_checked_at;
+                last_checked_at = excluded.last_checked_at,
+                is_short = CASE WHEN excluded.is_short != 0 THEN excluded.is_short ELSE is_short END,
+                last_comment_at = CASE WHEN excluded.last_comment_at > 0 THEN excluded.last_comment_at ELSE last_comment_at END,
+                last_comment_count_checked = CASE WHEN excluded.last_comment_count_checked > 0 THEN excluded.last_comment_count_checked ELSE last_comment_count_checked END;
             "#,
             params![
                 video_id,
@@ -236,10 +280,46 @@ impl Database {
                 views as i64,
                 likes as i64,
                 comments as i64,
-                now as i64
+                now as i64,
+                is_short_val,
+                last_comment_at as i64,
+                last_comment_count_checked as i64
             ],
         )?;
         Ok(())
+    }
+
+    pub fn get_video(&self, video_id: &str) -> Result<Option<CachedVideo>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT video_id, channel_id, title, published_at, views, likes, comments, last_checked_at, is_short, last_comment_at, last_comment_count_checked
+            FROM videos
+            WHERE video_id = ?1
+            LIMIT 1;
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![video_id])?;
+        if let Some(row) = rows.next()? {
+            let is_short_num: i64 = row.get::<_, Option<i64>>(8)?.unwrap_or(0);
+            let last_comment_at: i64 = row.get::<_, Option<i64>>(9)?.unwrap_or(0);
+            let last_comment_count_checked: i64 = row.get::<_, Option<i64>>(10)?.unwrap_or(0);
+            Ok(Some(CachedVideo {
+                video_id: row.get(0)?,
+                channel_id: row.get(1)?,
+                title: row.get(2)?,
+                published_at: row.get::<_, i64>(3)? as u64,
+                views: row.get::<_, i64>(4)? as u64,
+                likes: row.get::<_, i64>(5)? as u64,
+                comments: row.get::<_, i64>(6)? as u64,
+                last_checked_at: row.get::<_, i64>(7)? as u64,
+                is_short: is_short_num != 0,
+                last_comment_at: last_comment_at.max(0) as u64,
+                last_comment_count_checked: last_comment_count_checked.max(0) as u64,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn get_channel_total_comments(&self, channel_id: &str) -> Result<u64> {
@@ -253,7 +333,7 @@ impl Database {
     pub fn get_recent_videos(&self, channel_id: &str, limit: usize) -> Result<Vec<CachedVideo>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT video_id, channel_id, title, published_at, views, likes, comments, last_checked_at
+            SELECT video_id, channel_id, title, published_at, views, likes, comments, last_checked_at, is_short, last_comment_at, last_comment_count_checked
             FROM videos
             WHERE channel_id = ?1
             ORDER BY published_at DESC
@@ -262,6 +342,9 @@ impl Database {
         )?;
 
         let rows = stmt.query_map(params![channel_id, limit as i64], |row| {
+            let is_short_num: i64 = row.get::<_, Option<i64>>(8)?.unwrap_or(0);
+            let last_comment_at: i64 = row.get::<_, Option<i64>>(9)?.unwrap_or(0);
+            let last_comment_count_checked: i64 = row.get::<_, Option<i64>>(10)?.unwrap_or(0);
             Ok(CachedVideo {
                 video_id: row.get(0)?,
                 channel_id: row.get(1)?,
@@ -271,6 +354,9 @@ impl Database {
                 likes: row.get::<_, i64>(5)? as u64,
                 comments: row.get::<_, i64>(6)? as u64,
                 last_checked_at: row.get::<_, i64>(7)? as u64,
+                is_short: is_short_num != 0,
+                last_comment_at: last_comment_at.max(0) as u64,
+                last_comment_count_checked: last_comment_count_checked.max(0) as u64,
             })
         })?;
 
@@ -368,12 +454,33 @@ mod tests {
         db.upsert_channel("UC12345", "@test", "Test", "UU12345", 100, 1000, 2)
             .unwrap();
 
-        db.upsert_video("v1", "UC12345", "Video 1", 1000, 100, 10, 5)
+        db.upsert_video("v1", "UC12345", "Video 1", 1000, 100, 10, 5, false, 0, 0)
             .unwrap();
-        db.upsert_video("v2", "UC12345", "Video 2", 2000, 200, 20, 15)
-            .unwrap();
+        db.upsert_video(
+            "v2",
+            "UC12345",
+            "Video 2 #shorts",
+            2000,
+            200,
+            20,
+            15,
+            true,
+            2050,
+            15,
+        )
+        .unwrap();
 
         let total_comments = db.get_channel_total_comments("UC12345").unwrap();
         assert_eq!(total_comments, 20);
+
+        let list = db.get_recent_videos("UC12345", 10).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list[0].is_short_video());
+        assert_eq!(list[0].video_type_label(), "Short");
+        assert_eq!(list[0].last_comment_at, 2050);
+        assert_eq!(list[0].last_comment_count_checked, 15);
+        assert!(!list[1].is_short_video());
+        assert_eq!(list[1].video_type_label(), "Video");
+        assert_eq!(list[1].last_comment_at, 0);
     }
 }

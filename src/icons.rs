@@ -233,3 +233,25 @@ pub fn draw_comment_icon(painter: &Painter, rect: Rect, color: Color32) {
         stroke,
     ));
 }
+
+/// Draws vector sort arrow (chevron pointing up for Ascending, down for Descending)
+pub fn draw_sort_arrow(painter: &Painter, center: Pos2, ascending: bool, color: Color32) {
+    let w = 3.2_f32;
+    let h = 2.2_f32;
+    let stroke = Stroke::new(1.4_f32, color);
+    if ascending {
+        // Pointing up: ^
+        let p0 = Pos2::new(center.x - w, center.y + h * 0.5);
+        let p1 = Pos2::new(center.x, center.y - h * 0.5);
+        let p2 = Pos2::new(center.x + w, center.y + h * 0.5);
+        painter.line_segment([p0, p1], stroke);
+        painter.line_segment([p1, p2], stroke);
+    } else {
+        // Pointing down: v
+        let p0 = Pos2::new(center.x - w, center.y - h * 0.5);
+        let p1 = Pos2::new(center.x, center.y + h * 0.5);
+        let p2 = Pos2::new(center.x + w, center.y - h * 0.5);
+        painter.line_segment([p0, p1], stroke);
+        painter.line_segment([p1, p2], stroke);
+    }
+}

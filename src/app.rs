@@ -219,6 +219,22 @@ struct ResizeDragState {
     start_pointer_pos: Pos2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoSortColumn {
+    Title,
+    Type,
+    Age,
+    Views,
+    Likes,
+    Comments,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
 pub struct SocialCountApp {
     config: Config,
     channels: Vec<ChannelData>,
@@ -239,6 +255,8 @@ pub struct SocialCountApp {
     editing_channel_input: String,
     profile_error_msg: Option<String>,
     selected_channel_details: Option<String>,
+    video_sort_column: VideoSortColumn,
+    video_sort_direction: SortDirection,
     #[cfg(windows)]
     main_hwnd: isize,
     #[cfg(windows)]
@@ -320,6 +338,8 @@ impl SocialCountApp {
             editing_channel_input: String::new(),
             profile_error_msg: None,
             selected_channel_details: None,
+            video_sort_column: VideoSortColumn::Age,
+            video_sort_direction: SortDirection::Descending,
             #[cfg(windows)]
             main_hwnd: 0,
             #[cfg(windows)]
@@ -3385,24 +3405,23 @@ impl SocialCountApp {
 
                 ui.add_space(12.0);
 
-                ui.label(
-                    egui::RichText::new("Recent Videos & Tracked Comments")
-                        .strong()
-                        .size(13.0)
-                        .color(Color32::from_rgb(226, 232, 240)),
-                );
-                ui.add_space(4.0);
-
                 let mut videos = Vec::new();
                 if let Some(cid) = &channel_id_to_query {
                     if let Ok(db) = crate::db::Database::open() {
-                        if let Ok(list) = db.get_recent_videos(cid, 20) {
+                        if let Ok(list) = db.get_recent_videos(cid, 50) {
                             videos = list;
                         }
                     }
                 }
 
                 if videos.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Recent Videos & Tracked Comments")
+                            .strong()
+                            .size(13.0)
+                            .color(Color32::from_rgb(226, 232, 240)),
+                    );
+                    ui.add_space(4.0);
                     egui::Frame::none()
                         .fill(Color32::from_rgba_unmultiplied(30, 34, 46, 180))
                         .rounding(Rounding::same(8.0))
@@ -3423,111 +3442,588 @@ impl SocialCountApp {
                             );
                         });
                 } else {
-                    for v in &videos {
-                        egui::Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(24, 27, 38, 210))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_white_alpha(15)))
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(Margin::symmetric(10.0, 8.0))
-                            .show(ui, |ui| {
-                                let video_url =
-                                    format!("https://www.youtube.com/watch?v={}", v.video_id);
-                                let link_resp = ui.add(egui::Link::new(
-                                    egui::RichText::new(&v.title)
-                                        .strong()
-                                        .size(12.0)
-                                        .color(Color32::from_rgb(241, 245, 249)),
-                                ));
-                                if link_resp.clicked() {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("Videos ({})", videos.len()))
+                                .strong()
+                                .size(13.0)
+                                .color(Color32::from_rgb(226, 232, 240)),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new("Click column to sort")
+                                    .size(10.0)
+                                    .color(Color32::from_rgb(100, 116, 139)),
+                            );
+                        });
+                    });
+                    ui.add_space(6.0);
+
+                    let table_w = ui.available_width().max(350.0);
+                    let type_w = 44.0_f32;
+                    let age_w = 48.0_f32;
+                    let views_w = 46.0_f32;
+                    let likes_w = 44.0_f32;
+                    let comments_w = 40.0_f32;
+                    let col_gap = 4.0_f32;
+                    let pad_x = 6.0_f32;
+                    let metrics_w =
+                        type_w + age_w + views_w + likes_w + comments_w + (col_gap * 5.0) + (pad_x * 2.0);
+                    let title_w = (table_w - metrics_w).max(80.0);
+
+                    egui::ScrollArea::horizontal()
+                        .id_salt("videos_table_h_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            // 1. Table Header
+                            let header_h = 24.0_f32;
+                            let (header_rect, _) = ui.allocate_exact_size(
+                                Vec2::new(table_w, header_h),
+                                egui::Sense::hover(),
+                            );
+
+                            ui.painter().rect_filled(
+                                header_rect,
+                                Rounding {
+                                    nw: 6.0,
+                                    ne: 6.0,
+                                    sw: 0.0,
+                                    se: 0.0,
+                                },
+                                Color32::from_rgba_unmultiplied(32, 38, 52, 220),
+                            );
+                            ui.painter().rect_stroke(
+                                header_rect,
+                                Rounding {
+                                    nw: 6.0,
+                                    ne: 6.0,
+                                    sw: 0.0,
+                                    se: 0.0,
+                                },
+                                Stroke::new(1.0_f32, Color32::from_white_alpha(20)),
+                            );
+
+                            let x0 = header_rect.left() + pad_x;
+                            let y0 = header_rect.top();
+                            let title_hdr_rect = Rect::from_min_size(
+                                Pos2::new(x0, y0),
+                                Vec2::new(title_w, header_h),
+                            );
+                            let type_hdr_rect = Rect::from_min_size(
+                                Pos2::new(title_hdr_rect.right() + col_gap, y0),
+                                Vec2::new(type_w, header_h),
+                            );
+                            let age_hdr_rect = Rect::from_min_size(
+                                Pos2::new(type_hdr_rect.right() + col_gap, y0),
+                                Vec2::new(age_w, header_h),
+                            );
+                            let views_hdr_rect = Rect::from_min_size(
+                                Pos2::new(age_hdr_rect.right() + col_gap, y0),
+                                Vec2::new(views_w, header_h),
+                            );
+                            let likes_hdr_rect = Rect::from_min_size(
+                                Pos2::new(views_hdr_rect.right() + col_gap, y0),
+                                Vec2::new(likes_w, header_h),
+                            );
+                            let comms_hdr_rect = Rect::from_min_size(
+                                Pos2::new(likes_hdr_rect.right() + col_gap, y0),
+                                Vec2::new(comments_w, header_h),
+                            );
+
+                            let mut clicked_sort = None;
+
+                            // Title Column Header
+                            let is_title_active =
+                                self.video_sort_column == VideoSortColumn::Title;
+                            let is_title_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                title_hdr_rect,
+                                "Video",
+                                false,
+                                is_title_active,
+                                is_title_asc,
+                                Color32::WHITE,
+                                if is_title_active {
+                                    if is_title_asc {
+                                        "Sorted A to Z. Click to sort Z to A"
+                                    } else {
+                                        "Sorted Z to A. Click to sort A to Z"
+                                    }
+                                } else {
+                                    "Click to sort alphabetically by title"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Title);
+                            }
+
+                            // Type Column Header
+                            let is_type_active =
+                                self.video_sort_column == VideoSortColumn::Type;
+                            let is_type_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                type_hdr_rect,
+                                "Type",
+                                true,
+                                is_type_active,
+                                is_type_asc,
+                                Color32::from_rgb(251, 113, 133),
+                                if is_type_active {
+                                    if is_type_asc {
+                                        "Sorted Videos first. Click to sort Shorts first"
+                                    } else {
+                                        "Sorted Shorts first. Click to sort Videos first"
+                                    }
+                                } else {
+                                    "Click to sort by video type (Short / Video)"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Type);
+                            }
+
+                            // Age Column Header
+                            let is_age_active = self.video_sort_column == VideoSortColumn::Age;
+                            let is_age_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                age_hdr_rect,
+                                "Age",
+                                true,
+                                is_age_active,
+                                is_age_asc,
+                                Color32::from_rgb(147, 197, 253),
+                                if is_age_active {
+                                    if is_age_asc {
+                                        "Sorted oldest first. Click to sort newest first"
+                                    } else {
+                                        "Sorted newest first. Click to sort oldest first"
+                                    }
+                                } else {
+                                    "Click to sort by age / publication date"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Age);
+                            }
+
+                            // Views Column Header
+                            let is_views_active =
+                                self.video_sort_column == VideoSortColumn::Views;
+                            let is_views_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                views_hdr_rect,
+                                "Views",
+                                true,
+                                is_views_active,
+                                is_views_asc,
+                                Color32::from_rgb(96, 165, 250),
+                                if is_views_active {
+                                    if is_views_asc {
+                                        "Sorted lowest views first. Click to sort highest first"
+                                    } else {
+                                        "Sorted highest views first. Click to sort lowest first"
+                                    }
+                                } else {
+                                    "Click to sort by views"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Views);
+                            }
+
+                            // Likes Column Header
+                            let is_likes_active =
+                                self.video_sort_column == VideoSortColumn::Likes;
+                            let is_likes_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                likes_hdr_rect,
+                                "Likes",
+                                true,
+                                is_likes_active,
+                                is_likes_asc,
+                                Color32::from_rgb(52, 211, 153),
+                                if is_likes_active {
+                                    if is_likes_asc {
+                                        "Sorted lowest likes first. Click to sort highest first"
+                                    } else {
+                                        "Sorted highest likes first. Click to sort lowest first"
+                                    }
+                                } else {
+                                    "Click to sort by likes"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Likes);
+                            }
+
+                            // Comments Column Header
+                            let is_comms_active =
+                                self.video_sort_column == VideoSortColumn::Comments;
+                            let is_comms_asc =
+                                self.video_sort_direction == SortDirection::Ascending;
+                            if render_table_header_cell(
+                                ui,
+                                comms_hdr_rect,
+                                "Com.",
+                                true,
+                                is_comms_active,
+                                is_comms_asc,
+                                Color32::from_rgb(251, 191, 36),
+                                if is_comms_active {
+                                    if is_comms_asc {
+                                        "Sorted lowest comments first. Click to sort highest first"
+                                    } else {
+                                        "Sorted highest comments first. Click to sort lowest first"
+                                    }
+                                } else {
+                                    "Click to sort by comments"
+                                },
+                            ) {
+                                clicked_sort = Some(VideoSortColumn::Comments);
+                            }
+
+                            if let Some(col) = clicked_sort {
+                                if self.video_sort_column == col {
+                                    self.video_sort_direction = match self.video_sort_direction {
+                                        SortDirection::Ascending => SortDirection::Descending,
+                                        SortDirection::Descending => SortDirection::Ascending,
+                                    };
+                                } else {
+                                    self.video_sort_column = col;
+                                    self.video_sort_direction = match col {
+                                        VideoSortColumn::Title => SortDirection::Ascending,
+                                        VideoSortColumn::Type => SortDirection::Ascending,
+                                        _ => SortDirection::Descending,
+                                    };
+                                }
+                            }
+
+                            // 2. Sort videos according to selected column & direction
+                            self.sort_videos(&mut videos);
+
+                            // 3. Render Video Data Rows
+                            let row_h = 24.0_f32;
+                            let num_videos = videos.len();
+                            for (idx, v) in videos.iter().enumerate() {
+                                let (row_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(table_w, row_h),
+                                    egui::Sense::hover(),
+                                );
+                                let is_last = idx == num_videos - 1;
+                                let is_hovered = ui.rect_contains_pointer(row_rect);
+
+                                let row_bg = if is_hovered {
+                                    Color32::from_rgba_unmultiplied(46, 54, 76, 210)
+                                } else if idx % 2 == 0 {
+                                    Color32::from_rgba_unmultiplied(22, 26, 36, 180)
+                                } else {
+                                    Color32::from_rgba_unmultiplied(28, 33, 46, 180)
+                                };
+
+                                let row_rounding = if is_last {
+                                    Rounding {
+                                        nw: 0.0,
+                                        ne: 0.0,
+                                        sw: 6.0,
+                                        se: 6.0,
+                                    }
+                                } else {
+                                    Rounding::ZERO
+                                };
+
+                                ui.painter().rect_filled(row_rect, row_rounding, row_bg);
+                                ui.painter().rect_stroke(
+                                    row_rect,
+                                    row_rounding,
+                                    Stroke::new(1.0_f32, Color32::from_white_alpha(15)),
+                                );
+
+                                let rx0 = row_rect.left() + pad_x;
+                                let ry0 = row_rect.top();
+                                let title_cell_rect = Rect::from_min_size(
+                                    Pos2::new(rx0, ry0),
+                                    Vec2::new(title_w, row_h),
+                                );
+                                let type_cell_rect = Rect::from_min_size(
+                                    Pos2::new(title_cell_rect.right() + col_gap, ry0),
+                                    Vec2::new(type_w, row_h),
+                                );
+                                let age_cell_rect = Rect::from_min_size(
+                                    Pos2::new(type_cell_rect.right() + col_gap, ry0),
+                                    Vec2::new(age_w, row_h),
+                                );
+                                let views_cell_rect = Rect::from_min_size(
+                                    Pos2::new(age_cell_rect.right() + col_gap, ry0),
+                                    Vec2::new(views_w, row_h),
+                                );
+                                let likes_cell_rect = Rect::from_min_size(
+                                    Pos2::new(views_cell_rect.right() + col_gap, ry0),
+                                    Vec2::new(likes_w, row_h),
+                                );
+                                let comms_cell_rect = Rect::from_min_size(
+                                    Pos2::new(likes_cell_rect.right() + col_gap, ry0),
+                                    Vec2::new(comments_w, row_h),
+                                );
+
+                                // Video Title Cell (Clickable Link)
+                                let is_short = v.is_short_video();
+                                let video_url = if is_short {
+                                    format!("https://www.youtube.com/shorts/{}", v.video_id)
+                                } else {
+                                    format!("https://www.youtube.com/watch?v={}", v.video_id)
+                                };
+                                let title_resp = ui
+                                    .interact(
+                                        title_cell_rect,
+                                        ui.id().with(("v_title_click", &v.video_id)),
+                                        egui::Sense::click(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{}\nClick to open in browser",
+                                        v.title
+                                    ));
+                                if title_resp.hovered() {
+                                    ui.output_mut(|o| {
+                                        o.cursor_icon = egui::CursorIcon::PointingHand
+                                    });
+                                }
+                                if title_resp.clicked() {
                                     let _ = open::that(&video_url);
                                 }
-                                if link_resp.hovered() {
-                                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+
+                                let title_color = if title_resp.hovered() {
+                                    Color32::from_rgb(125, 211, 252)
+                                } else {
+                                    Color32::from_rgb(241, 245, 249)
+                                };
+
+                                let font_id = egui::FontId::proportional(10.5);
+                                let title_avail_w = (title_w - 4.0).max(10.0);
+                                let truncated_title = truncate_text(
+                                    ui,
+                                    &v.title,
+                                    title_avail_w,
+                                    font_id.clone(),
+                                );
+                                let title_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        truncated_title,
+                                        font_id.clone(),
+                                        title_color,
+                                    )
+                                });
+                                let title_pos = Pos2::new(
+                                    title_cell_rect.left() + 2.0,
+                                    title_cell_rect.center().y - title_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(title_pos, title_galley.clone(), title_color);
+                                if title_resp.hovered() {
+                                    ui.painter().hline(
+                                        title_pos.x..=(title_pos.x + title_galley.size().x),
+                                        title_pos.y + title_galley.size().y,
+                                        Stroke::new(1.0_f32, title_color),
+                                    );
                                 }
 
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    let time_str = format_unix_timestamp(v.published_at);
-                                    ui.label(
-                                        egui::RichText::new(time_str)
-                                            .size(10.5)
-                                            .color(Color32::from_rgb(148, 163, 184)),
-                                    );
+                                // Type Badge Cell
+                                let type_badge_w = 36.0_f32;
+                                let type_badge_h = 15.0_f32;
+                                let badge_rect = Rect::from_center_size(
+                                    type_cell_rect.center(),
+                                    Vec2::new(type_badge_w, type_badge_h),
+                                );
+                                let (
+                                    badge_bg,
+                                    badge_stroke,
+                                    badge_text_color,
+                                    badge_text,
+                                    badge_tooltip,
+                                ) = if is_short {
+                                    (
+                                        Color32::from_rgba_unmultiplied(225, 29, 72, 45),
+                                        Stroke::new(
+                                            1.0_f32,
+                                            Color32::from_rgba_unmultiplied(244, 63, 94, 90),
+                                        ),
+                                        Color32::from_rgb(251, 113, 133),
+                                        "Short",
+                                        "YouTube Short (vertical format)",
+                                    )
+                                } else {
+                                    (
+                                        Color32::from_rgba_unmultiplied(59, 130, 246, 35),
+                                        Stroke::new(
+                                            1.0_f32,
+                                            Color32::from_rgba_unmultiplied(96, 165, 250, 75),
+                                        ),
+                                        Color32::from_rgb(147, 197, 253),
+                                        "Video",
+                                        "Standard YouTube Video",
+                                    )
+                                };
 
-                                    ui.label(
-                                        egui::RichText::new("•")
-                                            .size(10.0)
-                                            .color(Color32::from_rgb(71, 85, 105)),
-                                    );
+                                ui.painter().rect_filled(
+                                    badge_rect,
+                                    Rounding::same(3.5_f32),
+                                    badge_bg,
+                                );
+                                ui.painter().rect_stroke(
+                                    badge_rect,
+                                    Rounding::same(3.5_f32),
+                                    badge_stroke,
+                                );
 
-                                    // Views with eye icon
-                                    let views_fmt =
-                                        crate::youtube::clean_stat_number(&v.views.to_string());
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        let (eye_r, _) = ui.allocate_exact_size(
-                                            Vec2::new(12.0, 9.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        crate::icons::draw_eye_icon(
-                                            ui.painter(),
-                                            eye_r,
-                                            Color32::from_rgb(96, 165, 250),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("{} views", views_fmt))
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(147, 197, 253)),
-                                        );
-                                    });
-
-                                    ui.label(
-                                        egui::RichText::new("•")
-                                            .size(10.0)
-                                            .color(Color32::from_rgb(71, 85, 105)),
-                                    );
-
-                                    // Likes
-                                    let likes_fmt =
-                                        crate::youtube::clean_stat_number(&v.likes.to_string());
-                                    ui.label(
-                                        egui::RichText::new(format!("{} likes", likes_fmt))
-                                            .size(10.5)
-                                            .color(Color32::from_rgb(52, 211, 153)),
-                                    );
-
-                                    ui.label(
-                                        egui::RichText::new("•")
-                                            .size(10.0)
-                                            .color(Color32::from_rgb(71, 85, 105)),
-                                    );
-
-                                    // Comments with bubble icon
-                                    let comms_fmt =
-                                        crate::youtube::clean_stat_number(&v.comments.to_string());
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        let (comm_r, _) = ui.allocate_exact_size(
-                                            Vec2::new(11.0, 9.5),
-                                            egui::Sense::hover(),
-                                        );
-                                        crate::icons::draw_comment_icon(
-                                            ui.painter(),
-                                            comm_r,
-                                            Color32::from_rgb(251, 191, 36),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("{} comments", comms_fmt))
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(253, 230, 138)),
-                                        );
-                                    });
+                                let badge_font = egui::FontId::proportional(9.0);
+                                let badge_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        badge_text.to_string(),
+                                        badge_font,
+                                        badge_text_color,
+                                    )
                                 });
-                            });
-                        ui.add_space(4.0);
-                    }
+                                let badge_pos = Pos2::new(
+                                    badge_rect.center().x - badge_galley.size().x * 0.5,
+                                    badge_rect.center().y - badge_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(badge_pos, badge_galley, badge_text_color);
+
+                                ui.interact(
+                                    type_cell_rect,
+                                    ui.id().with(("v_type_h", &v.video_id)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(badge_tooltip);
+
+                                // Age Cell
+                                let age_str = format_unix_timestamp(v.published_at);
+                                ui.interact(
+                                    age_cell_rect,
+                                    ui.id().with(("v_age_h", &v.video_id)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(format!("Published: {}", age_str));
+                                let age_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        age_str,
+                                        font_id.clone(),
+                                        Color32::from_rgb(148, 163, 184),
+                                    )
+                                });
+                                let age_pos = Pos2::new(
+                                    age_cell_rect.right() - age_galley.size().x - 2.0,
+                                    age_cell_rect.center().y - age_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(
+                                    age_pos,
+                                    age_galley,
+                                    Color32::from_rgb(148, 163, 184),
+                                );
+
+                                // Views Cell
+                                let views_str = format_compact_metric(v.views);
+                                let views_fmt =
+                                    crate::youtube::clean_stat_number(&v.views.to_string());
+                                ui.interact(
+                                    views_cell_rect,
+                                    ui.id().with(("v_views_h", &v.video_id)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(format!("{} views", views_fmt));
+                                let views_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        views_str,
+                                        font_id.clone(),
+                                        Color32::from_rgb(147, 197, 253),
+                                    )
+                                });
+                                let views_pos = Pos2::new(
+                                    views_cell_rect.right() - views_galley.size().x - 2.0,
+                                    views_cell_rect.center().y - views_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(
+                                    views_pos,
+                                    views_galley,
+                                    Color32::from_rgb(147, 197, 253),
+                                );
+
+                                // Likes Cell
+                                let likes_str = format_compact_metric(v.likes);
+                                let likes_fmt =
+                                    crate::youtube::clean_stat_number(&v.likes.to_string());
+                                ui.interact(
+                                    likes_cell_rect,
+                                    ui.id().with(("v_likes_h", &v.video_id)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(format!("{} likes", likes_fmt));
+                                let likes_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        likes_str,
+                                        font_id.clone(),
+                                        Color32::from_rgb(52, 211, 153),
+                                    )
+                                });
+                                let likes_pos = Pos2::new(
+                                    likes_cell_rect.right() - likes_galley.size().x - 2.0,
+                                    likes_cell_rect.center().y - likes_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(
+                                    likes_pos,
+                                    likes_galley,
+                                    Color32::from_rgb(52, 211, 153),
+                                );
+
+                                // Comments Cell
+                                let comms_str = format_compact_metric(v.comments);
+                                let comms_fmt =
+                                    crate::youtube::clean_stat_number(&v.comments.to_string());
+                                let comms_tooltip = if v.comments == 0 {
+                                    "0 comments".to_string()
+                                } else if v.last_comment_at > 0 {
+                                    format!(
+                                        "{} comments\nLast comment: {}",
+                                        comms_fmt,
+                                        format_unix_timestamp(v.last_comment_at)
+                                    )
+                                } else {
+                                    format!("{} comments", comms_fmt)
+                                };
+                                ui.interact(
+                                    comms_cell_rect,
+                                    ui.id().with(("v_comms_h", &v.video_id)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(comms_tooltip);
+                                let comms_galley = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        comms_str,
+                                        font_id.clone(),
+                                        Color32::from_rgb(253, 230, 138),
+                                    )
+                                });
+                                let comms_pos = Pos2::new(
+                                    comms_cell_rect.right() - comms_galley.size().x - 2.0,
+                                    comms_cell_rect.center().y - comms_galley.size().y * 0.5,
+                                );
+                                ui.painter().galley(
+                                    comms_pos,
+                                    comms_galley,
+                                    Color32::from_rgb(253, 230, 138),
+                                );
+                            }
+                            ui.add_space(4.0);
+                        });
                 }
             });
+    }
+
+    fn sort_videos(&self, videos: &mut [crate::db::CachedVideo]) {
+        sort_videos_list(videos, self.video_sort_column, self.video_sort_direction);
     }
 
     #[cfg(windows)]
@@ -3704,5 +4200,340 @@ fn format_unix_timestamp(ts: u64) -> String {
         }
     } else {
         "recent".to_string()
+    }
+}
+
+pub fn sort_videos_list(
+    videos: &mut [crate::db::CachedVideo],
+    col: VideoSortColumn,
+    dir: SortDirection,
+) {
+    videos.sort_by(|a, b| {
+        let cmp = match col {
+            VideoSortColumn::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            VideoSortColumn::Type => {
+                let a_type = if a.is_short_video() { 1 } else { 0 };
+                let b_type = if b.is_short_video() { 1 } else { 0 };
+                a_type.cmp(&b_type)
+            }
+            VideoSortColumn::Age => a.published_at.cmp(&b.published_at),
+            VideoSortColumn::Views => a.views.cmp(&b.views),
+            VideoSortColumn::Likes => a.likes.cmp(&b.likes),
+            VideoSortColumn::Comments => a.comments.cmp(&b.comments),
+        };
+        let dir_cmp = match dir {
+            SortDirection::Ascending => cmp,
+            SortDirection::Descending => cmp.reverse(),
+        };
+        dir_cmp.then_with(|| b.published_at.cmp(&a.published_at))
+    });
+}
+
+fn truncate_text(ui: &egui::Ui, text: &str, max_w: f32, font_id: egui::FontId) -> String {
+    let full_w = ui.fonts(|f| {
+        f.layout_no_wrap(text.to_string(), font_id.clone(), Color32::WHITE)
+            .size()
+            .x
+    });
+    if full_w <= max_w {
+        return text.to_string();
+    }
+    let mut end = text.len();
+    while end > 0 {
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let candidate = format!("{}...", &text[..end]);
+        let w = ui.fonts(|f| {
+            f.layout_no_wrap(candidate.clone(), font_id.clone(), Color32::WHITE)
+                .size()
+                .x
+        });
+        if w <= max_w {
+            return candidate;
+        }
+        end = end.saturating_sub(1);
+    }
+    "...".to_string()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_table_header_cell(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    label: &str,
+    align_right: bool,
+    is_active: bool,
+    ascending: bool,
+    active_color: Color32,
+    tooltip: &str,
+) -> bool {
+    let resp = ui
+        .interact(rect, ui.id().with(("th_cell", label)), egui::Sense::click())
+        .on_hover_text(tooltip);
+    if resp.hovered() {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+    }
+
+    let bg_color = if resp.hovered() {
+        Color32::from_white_alpha(20)
+    } else if is_active {
+        Color32::from_white_alpha(10)
+    } else {
+        Color32::TRANSPARENT
+    };
+    if bg_color != Color32::TRANSPARENT {
+        ui.painter()
+            .rect_filled(rect, Rounding::same(4.0), bg_color);
+    }
+
+    let text_color = if is_active {
+        active_color
+    } else if resp.hovered() {
+        Color32::from_rgb(226, 232, 240)
+    } else {
+        Color32::from_rgb(148, 163, 184)
+    };
+
+    let font_id = egui::FontId::proportional(10.5);
+    let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id, text_color));
+
+    let text_pos = if align_right {
+        if is_active {
+            Pos2::new(
+                rect.right() - galley.size().x - 12.0,
+                rect.center().y - galley.size().y * 0.5,
+            )
+        } else {
+            Pos2::new(
+                rect.right() - galley.size().x - 4.0,
+                rect.center().y - galley.size().y * 0.5,
+            )
+        }
+    } else {
+        Pos2::new(rect.left() + 4.0, rect.center().y - galley.size().y * 0.5)
+    };
+    ui.painter().galley(text_pos, galley.clone(), text_color);
+
+    if is_active {
+        let arrow_x = if align_right {
+            rect.right() - 5.0
+        } else {
+            text_pos.x + galley.size().x + 7.0
+        };
+        let arrow_center = Pos2::new(arrow_x, rect.center().y);
+        crate::icons::draw_sort_arrow(ui.painter(), arrow_center, ascending, text_color);
+    }
+
+    resp.clicked()
+}
+
+pub fn format_compact_metric(val: u64) -> String {
+    if val >= 1_000_000_000 {
+        format!("{:.1}B", val as f64 / 1_000_000_000.0)
+    } else if val >= 1_000_000 {
+        format!("{:.1}M", val as f64 / 1_000_000.0)
+    } else if val >= 10_000 {
+        format!("{:.1}K", val as f64 / 1_000.0)
+    } else {
+        crate::youtube::clean_stat_number(&val.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::CachedVideo;
+
+    fn sample_video(
+        id: &str,
+        title: &str,
+        published_at: u64,
+        views: u64,
+        likes: u64,
+        comments: u64,
+        is_short: bool,
+    ) -> CachedVideo {
+        CachedVideo {
+            video_id: id.to_string(),
+            channel_id: "test_ch".to_string(),
+            title: title.to_string(),
+            published_at,
+            views,
+            likes,
+            comments,
+            last_checked_at: 0,
+            is_short,
+            last_comment_at: 0,
+            last_comment_count_checked: 0,
+        }
+    }
+
+    #[test]
+    fn test_format_compact_metric() {
+        assert_eq!(format_compact_metric(0), "0");
+        assert_eq!(format_compact_metric(54), "54");
+        assert_eq!(format_compact_metric(999), "999");
+        assert_eq!(format_compact_metric(1500), "1.500");
+        assert_eq!(format_compact_metric(10500), "10.5K");
+        assert_eq!(format_compact_metric(150000), "150.0K");
+        assert_eq!(format_compact_metric(1200000), "1.2M");
+        assert_eq!(format_compact_metric(2500000000), "2.5B");
+    }
+
+    #[test]
+    fn test_sort_videos_by_views() {
+        let mut videos = vec![
+            sample_video("v1", "Alpha", 100, 50, 10, 5, false),
+            sample_video("v2", "Beta", 200, 500, 5, 20, false),
+            sample_video("v3", "Gamma", 300, 10, 50, 2, false),
+        ];
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Views,
+            SortDirection::Descending,
+        );
+        assert_eq!(videos[0].video_id, "v2");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v3");
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Views,
+            SortDirection::Ascending,
+        );
+        assert_eq!(videos[0].video_id, "v3");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v2");
+    }
+
+    #[test]
+    fn test_sort_videos_by_type() {
+        let mut videos = vec![
+            sample_video("v1", "Alpha", 100, 50, 10, 5, false),
+            sample_video("v2", "Beta", 200, 500, 5, 20, true),
+            sample_video("v3", "Gamma", 300, 10, 50, 2, false),
+        ];
+
+        // Ascending type: Videos first (0), then Shorts (1)
+        sort_videos_list(&mut videos, VideoSortColumn::Type, SortDirection::Ascending);
+        assert_eq!(videos[0].video_id, "v3"); // Video (newer)
+        assert_eq!(videos[1].video_id, "v1"); // Video (older)
+        assert_eq!(videos[2].video_id, "v2"); // Short
+
+        // Descending type: Shorts first (1), then Videos (0)
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Type,
+            SortDirection::Descending,
+        );
+        assert_eq!(videos[0].video_id, "v2"); // Short
+        assert_eq!(videos[1].video_id, "v3"); // Video (newer)
+        assert_eq!(videos[2].video_id, "v1"); // Video (older)
+    }
+
+    #[test]
+    fn test_sort_videos_by_likes() {
+        let mut videos = vec![
+            sample_video("v1", "Alpha", 100, 50, 10, 5, false),
+            sample_video("v2", "Beta", 200, 500, 5, 20, false),
+            sample_video("v3", "Gamma", 300, 10, 50, 2, false),
+        ];
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Likes,
+            SortDirection::Descending,
+        );
+        assert_eq!(videos[0].video_id, "v3");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v2");
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Likes,
+            SortDirection::Ascending,
+        );
+        assert_eq!(videos[0].video_id, "v2");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v3");
+    }
+
+    #[test]
+    fn test_sort_videos_by_comments() {
+        let mut videos = vec![
+            sample_video("v1", "Alpha", 100, 50, 10, 5, false),
+            sample_video("v2", "Beta", 200, 500, 5, 20, false),
+            sample_video("v3", "Gamma", 300, 10, 50, 2, false),
+        ];
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Comments,
+            SortDirection::Descending,
+        );
+        assert_eq!(videos[0].video_id, "v2");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v3");
+
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Comments,
+            SortDirection::Ascending,
+        );
+        assert_eq!(videos[0].video_id, "v3");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v2");
+    }
+
+    #[test]
+    fn test_sort_videos_by_age() {
+        let mut videos = vec![
+            sample_video("v1", "Alpha", 100, 50, 10, 5, false),
+            sample_video("v2", "Beta", 200, 500, 5, 20, false),
+            sample_video("v3", "Gamma", 300, 10, 50, 2, false),
+        ];
+
+        // Descending age: newest first (highest published_at)
+        sort_videos_list(&mut videos, VideoSortColumn::Age, SortDirection::Descending);
+        assert_eq!(videos[0].video_id, "v3");
+        assert_eq!(videos[1].video_id, "v2");
+        assert_eq!(videos[2].video_id, "v1");
+
+        // Ascending age: oldest first (lowest published_at)
+        sort_videos_list(&mut videos, VideoSortColumn::Age, SortDirection::Ascending);
+        assert_eq!(videos[0].video_id, "v1");
+        assert_eq!(videos[1].video_id, "v2");
+        assert_eq!(videos[2].video_id, "v3");
+    }
+
+    #[test]
+    fn test_sort_videos_by_title() {
+        let mut videos = vec![
+            sample_video("v1", "Bravo", 100, 50, 10, 5, false),
+            sample_video("v2", "charlie", 200, 500, 5, 20, false),
+            sample_video("v3", "Alpha", 300, 10, 50, 2, false),
+        ];
+
+        // Ascending title: A to Z (case-insensitive)
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Title,
+            SortDirection::Ascending,
+        );
+        assert_eq!(videos[0].video_id, "v3");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v2");
+
+        // Descending title: Z to A
+        sort_videos_list(
+            &mut videos,
+            VideoSortColumn::Title,
+            SortDirection::Descending,
+        );
+        assert_eq!(videos[0].video_id, "v2");
+        assert_eq!(videos[1].video_id, "v1");
+        assert_eq!(videos[2].video_id, "v3");
     }
 }
