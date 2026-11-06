@@ -874,9 +874,19 @@ impl eframe::App for SocialCountApp {
                             // 2. CHANNELS LIST
                             if self.is_compact {
                                 // In compact mode scrollbar is unnecessary: direct compact card layout
+                                let mut to_approve: Option<(String, CardMetric)> = None;
                                 for channel in &self.channels {
-                                    self.render_channel_card_compact(ui, channel);
+                                    if let Some(m) = self.render_channel_card_compact(ui, channel) {
+                                        to_approve = Some((channel.handle.clone(), m));
+                                    }
                                     ui.add_space(2.0);
+                                }
+                                if let Some((handle, metric)) = to_approve {
+                                    if let Some(ch) =
+                                        self.channels.iter_mut().find(|c| c.handle == handle)
+                                    {
+                                        ch.approve_metric(metric);
+                                    }
                                 }
                             } else {
                                 let footer_height = 26.0_f32;
@@ -889,11 +899,25 @@ impl eframe::App for SocialCountApp {
                                     .auto_shrink([false, false])
                                     .show(ui, |ui| {
                                         let mut clicked = None;
+                                        let mut to_approve: Option<(String, CardMetric)> = None;
                                         for channel in &self.channels {
-                                            if let Some(h) = self.render_channel_card(ui, channel) {
+                                            let (h, m) = self.render_channel_card(ui, channel);
+                                            if let Some(h) = h {
                                                 clicked = Some(h);
                                             }
+                                            if let Some(m) = m {
+                                                to_approve = Some((channel.handle.clone(), m));
+                                            }
                                             ui.add_space(8.0);
+                                        }
+                                        if let Some((handle, metric)) = to_approve {
+                                            if let Some(ch) = self
+                                                .channels
+                                                .iter_mut()
+                                                .find(|c| c.handle == handle)
+                                            {
+                                                ch.approve_metric(metric);
+                                            }
                                         }
                                         if let Some(h) = clicked {
                                             self.selected_channel_details = Some(h);
@@ -1468,10 +1492,15 @@ impl SocialCountApp {
     }
 
     /// Normal view: full channel card with avatar, title, handle and solid stat pills
-    fn render_channel_card(&self, ui: &mut egui::Ui, channel: &ChannelData) -> Option<String> {
+    fn render_channel_card(
+        &self,
+        ui: &mut egui::Ui,
+        channel: &ChannelData,
+    ) -> (Option<String>, Option<CardMetric>) {
         let opacity = self.card_opacity;
         let alpha_factor = opacity as f32 / 255.0;
         let mut open_details = None;
+        let mut approve_metric = None;
 
         let card_frame = egui::Frame::none()
             .fill(if opacity == 0 {
@@ -1634,12 +1663,24 @@ impl SocialCountApp {
                             if chunk.len() == 2 {
                                 let box_w = ((avail_w - gap) / 2.0_f32).max(70.0_f32);
                                 let box_size = Vec2::new(box_w, box_h);
-                                render_card_metric_box(ui, box_size, chunk[0], channel);
-                                render_card_metric_box(ui, box_size, chunk[1], channel);
+                                if let Some(m) =
+                                    render_card_metric_box(ui, box_size, chunk[0], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
+                                if let Some(m) =
+                                    render_card_metric_box(ui, box_size, chunk[1], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
                             } else {
                                 let box_w = avail_w;
                                 let box_size = Vec2::new(box_w, box_h);
-                                render_card_metric_box(ui, box_size, chunk[0], channel);
+                                if let Some(m) =
+                                    render_card_metric_box(ui, box_size, chunk[0], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
                             }
                         });
                     }
@@ -1647,13 +1688,18 @@ impl SocialCountApp {
             });
         });
 
-        open_details
+        (open_details, approve_metric)
     }
 
     /// ULTRA-COMPACT view: Circular channel icon on left flanked by 2x2 grid of stat pills (Subs, Views, Videos, Comments)
-    fn render_channel_card_compact(&self, ui: &mut egui::Ui, channel: &ChannelData) {
+    fn render_channel_card_compact(
+        &self,
+        ui: &mut egui::Ui,
+        channel: &ChannelData,
+    ) -> Option<CardMetric> {
         let opacity = self.card_opacity;
         let alpha_factor = opacity as f32 / 255.0;
+        let mut approve_metric = None;
 
         let card_frame = egui::Frame::none()
             .fill(if opacity == 0 {
@@ -1782,17 +1828,31 @@ impl SocialCountApp {
                             ui.spacing_mut().item_spacing.x = col_gap;
                             if chunk.len() == 2 {
                                 let box_size = Vec2::new(box_w, box_h);
-                                render_compact_metric_box(ui, box_size, chunk[0], channel);
-                                render_compact_metric_box(ui, box_size, chunk[1], channel);
+                                if let Some(m) =
+                                    render_compact_metric_box(ui, box_size, chunk[0], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
+                                if let Some(m) =
+                                    render_compact_metric_box(ui, box_size, chunk[1], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
                             } else {
                                 let box_size = Vec2::new(right_w, box_h);
-                                render_compact_metric_box(ui, box_size, chunk[0], channel);
+                                if let Some(m) =
+                                    render_compact_metric_box(ui, box_size, chunk[0], channel)
+                                {
+                                    approve_metric = Some(m);
+                                }
                             }
                         });
                     }
                 });
             });
         });
+
+        approve_metric
     }
     /// Complete Profile Manager (CRUD) modal accessible via right-click or settings button
     fn render_profile_manager(
@@ -2505,10 +2565,11 @@ impl SocialCountApp {
                     }
                 }
 
+                let mut approve_metric = None;
                 let card_w = ((ui.available_width() - 8.0) / 2.0).max(80.0);
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        render_detail_stat_pill(
+                        let p = render_detail_stat_pill(
                             ui,
                             Vec2::new(card_w, 42.0),
                             "Subscribers",
@@ -2516,11 +2577,14 @@ impl SocialCountApp {
                             channel.delta_subscribers(),
                             Color32::from_rgb(16, 44, 28),
                             Color32::from_rgb(52, 211, 153),
-                            egui::Sense::hover(),
+                            egui::Sense::click(),
                         );
+                        if p.double_clicked() {
+                            approve_metric = Some(CardMetric::Subscribers);
+                        }
                     });
                     ui.vertical(|ui| {
-                        render_detail_stat_pill(
+                        let p = render_detail_stat_pill(
                             ui,
                             Vec2::new(card_w, 42.0),
                             "Views",
@@ -2528,8 +2592,11 @@ impl SocialCountApp {
                             channel.delta_views(),
                             Color32::from_rgb(18, 36, 58),
                             Color32::from_rgb(96, 165, 250),
-                            egui::Sense::hover(),
+                            egui::Sense::click(),
                         );
+                        if p.double_clicked() {
+                            approve_metric = Some(CardMetric::Views);
+                        }
                     });
                 });
 
@@ -2541,7 +2608,7 @@ impl SocialCountApp {
                         } else {
                             crate::youtube::clean_stat_number(&channel.video_count_text)
                         };
-                        render_detail_stat_pill(
+                        let p = render_detail_stat_pill(
                             ui,
                             Vec2::new(card_w, 42.0),
                             "Total Videos",
@@ -2549,8 +2616,11 @@ impl SocialCountApp {
                             channel.delta_video_count(),
                             Color32::from_rgb(38, 22, 54),
                             Color32::from_rgb(192, 132, 252),
-                            egui::Sense::hover(),
+                            egui::Sense::click(),
                         );
+                        if p.double_clicked() {
+                            approve_metric = Some(CardMetric::Videos);
+                        }
                     });
                     ui.vertical(|ui| {
                         let total_likes = if channel.total_likes > 0 {
@@ -2564,7 +2634,7 @@ impl SocialCountApp {
                             0
                         };
                         let l_num = crate::youtube::clean_stat_number(&total_likes.to_string());
-                        render_detail_stat_pill(
+                        let p = render_detail_stat_pill(
                             ui,
                             Vec2::new(card_w, 42.0),
                             "Tracked Likes",
@@ -2572,8 +2642,11 @@ impl SocialCountApp {
                             channel.delta_likes(),
                             Color32::from_rgb(48, 18, 28),
                             Color32::from_rgb(251, 113, 133),
-                            egui::Sense::hover(),
+                            egui::Sense::click(),
                         );
+                        if p.double_clicked() {
+                            approve_metric = Some(CardMetric::Likes);
+                        }
                     });
                 });
 
@@ -2615,25 +2688,22 @@ impl SocialCountApp {
                         }
 
                         if pill_resp.clicked() {
-                            let url = if let Some(comm) = &latest_comm {
-                                if !comm.video_id.is_empty() {
-                                    format!("https://www.youtube.com/watch?v={}", comm.video_id)
-                                } else if let Some(cid) = &channel.channel_id {
-                                    format!("https://www.youtube.com/channel/{}", cid)
-                                } else {
-                                    format!("https://www.youtube.com/@{}", channel.handle.trim_start_matches('@'))
-                                }
-                            } else if let Some(cid) = &channel.channel_id {
-                                format!("https://www.youtube.com/channel/{}", cid)
-                            } else {
-                                format!("https://www.youtube.com/@{}", channel.handle.trim_start_matches('@'))
-                            };
-                            let _ = open::that(&url);
+                            let _ = open::that(channel.comments_inbox_url());
+                        }
+
+                        if pill_resp.double_clicked() {
+                            approve_metric = Some(CardMetric::Comments);
                         }
 
                         show_comments_metric_tooltip(&pill_resp, &channel, &latest_comm, &c_num, channel.delta_comments());
                     });
                 });
+
+                if let Some(m) = approve_metric {
+                    if let Some(ch) = self.channels.iter_mut().find(|c| c.handle == handle) {
+                        ch.approve_metric(m);
+                    }
+                }
 
                 if let Some((msg, time)) = &self.export_notification {
                     if time.elapsed() < std::time::Duration::from_secs(5) {
@@ -3425,11 +3495,17 @@ fn render_detail_stat_pill(
             delta_color,
         );
     }
-    let resp = if sense == egui::Sense::hover() {
-        resp.on_hover_text(format!("{}: {}", label, val_str))
+    let resp = if delta != 0 {
+        resp.on_hover_text(format!(
+            "{}: {}\nSince launch: {:+}\nDouble-click to acknowledge changes",
+            label, val_str, delta
+        ))
     } else {
-        resp
+        resp.on_hover_text(format!("{}: {}", label, val_str))
     };
+    if sense == egui::Sense::click() && resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     resp
 }
 
@@ -3578,16 +3654,26 @@ fn show_comments_metric_tooltip(
                 }
 
                 ui.add_space(4.0);
+                let hint_text = if delta_comments != 0 || channel.comments_changed {
+                    "Click to open YouTube Studio | Double-click to acknowledge changes"
+                } else {
+                    "Click to open YouTube Studio comments inbox"
+                };
                 ui.label(
-                    egui::RichText::new("Click to open video on YouTube")
+                    egui::RichText::new(hint_text)
                         .size(10.5)
                         .underline()
                         .color(Color32::from_rgb(96, 165, 250)),
                 );
             } else {
                 ui.add_space(4.0);
+                let hint_text = if delta_comments != 0 || channel.comments_changed {
+                    "Click to open YouTube Studio | Double-click to acknowledge changes"
+                } else {
+                    "Click to open YouTube Studio comments inbox"
+                };
                 ui.label(
-                    egui::RichText::new("Click to open channel on YouTube")
+                    egui::RichText::new(hint_text)
                         .size(10.5)
                         .underline()
                         .color(Color32::from_rgb(96, 165, 250)),
@@ -3734,23 +3820,17 @@ pub fn format_compact_metric(val: u64) -> String {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum CardMetric {
-    Subscribers,
-    Views,
-    Videos,
-    Comments,
-    Likes,
-}
+pub use crate::youtube::CardMetric;
 
 fn render_card_metric_box(
     ui: &mut egui::Ui,
     box_size: Vec2,
     metric: CardMetric,
     channel: &ChannelData,
-) {
+) -> Option<CardMetric> {
     let font_id = egui::FontId::proportional(13.0);
     let item_gap = 5.0_f32;
+    let mut approved = None;
 
     match metric {
         CardMetric::Subscribers => {
@@ -3758,7 +3838,13 @@ fn render_card_metric_box(
             let sub_increased = delta_sub > 0;
             let sub_changed = delta_sub != 0 || channel.sub_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Subscribers);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(16, 44, 28));
             let stroke_color = if sub_increased {
@@ -3841,7 +3927,7 @@ fn render_card_metric_box(
             let tooltip = if let Some(init) = channel.initial_subscriber_count {
                 if delta_sub != 0 {
                     format!(
-                        "Subscribers: {} | Since launch: {:+} (initial: {})",
+                        "Subscribers: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         sub_num, delta_sub, init
                     )
                 } else {
@@ -3857,7 +3943,13 @@ fn render_card_metric_box(
             let views_increased = delta_views > 0;
             let views_changed = delta_views != 0 || channel.views_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Views);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(18, 36, 58));
             let stroke_color = if views_increased {
@@ -3940,7 +4032,7 @@ fn render_card_metric_box(
             let tooltip = if let Some(init) = channel.initial_views_count {
                 if delta_views != 0 {
                     format!(
-                        "Views: {} | Since launch: {:+} (initial: {})",
+                        "Views: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         views_num, delta_views, init
                     )
                 } else {
@@ -3956,7 +4048,13 @@ fn render_card_metric_box(
             let vid_increased = delta_videos > 0;
             let vid_changed = delta_videos != 0 || channel.video_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Videos);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(38, 22, 54));
             let stroke_color = if vid_increased {
@@ -4054,7 +4152,7 @@ fn render_card_metric_box(
             let tooltip = if let Some(init) = channel.initial_video_count {
                 if delta_videos != 0 {
                     format!(
-                        "Videos: {} | Since launch: {:+} (initial: {})",
+                        "Videos: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         videos_num, delta_videos, init
                     )
                 } else {
@@ -4175,26 +4273,10 @@ fn render_card_metric_box(
             });
 
             if box_resp.clicked() {
-                let url = if let Some(comm) = &latest_comm {
-                    if !comm.video_id.is_empty() {
-                        format!("https://www.youtube.com/watch?v={}", comm.video_id)
-                    } else if let Some(cid) = &channel.channel_id {
-                        format!("https://www.youtube.com/channel/{}", cid)
-                    } else {
-                        format!(
-                            "https://www.youtube.com/@{}",
-                            channel.handle.trim_start_matches('@')
-                        )
-                    }
-                } else if let Some(cid) = &channel.channel_id {
-                    format!("https://www.youtube.com/channel/{}", cid)
-                } else {
-                    format!(
-                        "https://www.youtube.com/@{}",
-                        channel.handle.trim_start_matches('@')
-                    )
-                };
-                let _ = open::that(&url);
+                let _ = open::that(channel.comments_inbox_url());
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Comments);
             }
 
             show_comments_metric_tooltip(
@@ -4210,7 +4292,13 @@ fn render_card_metric_box(
             let likes_increased = delta_likes > 0;
             let likes_changed = delta_likes != 0 || channel.likes_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Likes);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(8.0), Color32::from_rgb(48, 18, 28));
             let stroke_color = if likes_increased {
@@ -4298,7 +4386,7 @@ fn render_card_metric_box(
             let tooltip = if let Some(init) = channel.initial_total_likes {
                 if delta_likes != 0 {
                     format!(
-                        "Likes: {} | Since launch: {:+} (initial: {})",
+                        "Likes: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         likes_num, delta_likes, init
                     )
                 } else {
@@ -4310,6 +4398,7 @@ fn render_card_metric_box(
             box_resp.on_hover_text(tooltip);
         }
     }
+    approved
 }
 
 fn render_compact_metric_box(
@@ -4317,10 +4406,11 @@ fn render_compact_metric_box(
     box_size: Vec2,
     metric: CardMetric,
     channel: &ChannelData,
-) {
+) -> Option<CardMetric> {
     let font_id = egui::FontId::proportional(11.0);
     let delta_font = egui::FontId::proportional(9.0);
     let item_gap = 3.0_f32;
+    let mut approved = None;
 
     match metric {
         CardMetric::Subscribers => {
@@ -4328,7 +4418,13 @@ fn render_compact_metric_box(
             let sub_increased = delta_sub > 0;
             let sub_changed = delta_sub != 0 || channel.sub_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Subscribers);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(16, 44, 28));
             let stroke_color = if sub_increased {
@@ -4410,7 +4506,7 @@ fn render_compact_metric_box(
             let tooltip = if let Some(init) = channel.initial_subscriber_count {
                 if delta_sub != 0 {
                     format!(
-                        "Subscribers: {} | Since launch: {:+} (initial: {})",
+                        "Subscribers: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         sub_num, delta_sub, init
                     )
                 } else {
@@ -4426,7 +4522,13 @@ fn render_compact_metric_box(
             let views_increased = delta_views > 0;
             let views_changed = delta_views != 0 || channel.views_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Views);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(18, 36, 58));
             let stroke_color = if views_increased {
@@ -4508,7 +4610,7 @@ fn render_compact_metric_box(
             let tooltip = if let Some(init) = channel.initial_views_count {
                 if delta_views != 0 {
                     format!(
-                        "Views: {} | Since launch: {:+} (initial: {})",
+                        "Views: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         views_num, delta_views, init
                     )
                 } else {
@@ -4524,7 +4626,13 @@ fn render_compact_metric_box(
             let vid_increased = delta_videos > 0;
             let vid_changed = delta_videos != 0 || channel.video_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Videos);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(38, 22, 54));
             let stroke_color = if vid_increased {
@@ -4622,7 +4730,7 @@ fn render_compact_metric_box(
             let tooltip = if let Some(init) = channel.initial_video_count {
                 if delta_videos != 0 {
                     format!(
-                        "Videos: {} | Since launch: {:+} (initial: {})",
+                        "Videos: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         videos_num, delta_videos, init
                     )
                 } else {
@@ -4742,26 +4850,10 @@ fn render_compact_metric_box(
             });
 
             if box_resp.clicked() {
-                let url = if let Some(comm) = &latest_comm {
-                    if !comm.video_id.is_empty() {
-                        format!("https://www.youtube.com/watch?v={}", comm.video_id)
-                    } else if let Some(cid) = &channel.channel_id {
-                        format!("https://www.youtube.com/channel/{}", cid)
-                    } else {
-                        format!(
-                            "https://www.youtube.com/@{}",
-                            channel.handle.trim_start_matches('@')
-                        )
-                    }
-                } else if let Some(cid) = &channel.channel_id {
-                    format!("https://www.youtube.com/channel/{}", cid)
-                } else {
-                    format!(
-                        "https://www.youtube.com/@{}",
-                        channel.handle.trim_start_matches('@')
-                    )
-                };
-                let _ = open::that(&url);
+                let _ = open::that(channel.comments_inbox_url());
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Comments);
             }
 
             show_comments_metric_tooltip(
@@ -4777,7 +4869,13 @@ fn render_compact_metric_box(
             let likes_increased = delta_likes > 0;
             let likes_changed = delta_likes != 0 || channel.likes_changed;
 
-            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::hover());
+            let (box_rect, box_resp) = ui.allocate_exact_size(box_size, egui::Sense::click());
+            if box_resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if box_resp.double_clicked() {
+                approved = Some(CardMetric::Likes);
+            }
             ui.painter()
                 .rect_filled(box_rect, Rounding::same(4.0), Color32::from_rgb(48, 18, 28));
             let stroke_color = if likes_increased {
@@ -4864,7 +4962,7 @@ fn render_compact_metric_box(
             let tooltip = if let Some(init) = channel.initial_total_likes {
                 if delta_likes != 0 {
                     format!(
-                        "Likes: {} | Since launch: {:+} (initial: {})",
+                        "Likes: {} | Since launch: {:+} (initial: {})\nDouble-click to acknowledge changes",
                         likes_num, delta_likes, init
                     )
                 } else {
@@ -4876,6 +4974,7 @@ fn render_compact_metric_box(
             box_resp.on_hover_text(tooltip);
         }
     }
+    approved
 }
 
 fn export_channel_to_csv(channel: &ChannelData) -> Result<String, std::io::Error> {

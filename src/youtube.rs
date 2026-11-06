@@ -5,6 +5,15 @@
 use serde_json::Value;
 use std::time::Duration;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardMetric {
+    Subscribers,
+    Views,
+    Videos,
+    Comments,
+    Likes,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChannelData {
     pub handle: String,
@@ -123,6 +132,63 @@ impl ChannelData {
             || self.subscriber_text == "N/D"
             || self.views_text == "N/A"
             || self.views_text == "N/D"
+    }
+
+    pub fn comments_inbox_url(&self) -> String {
+        let channel_id = self.channel_id.clone().or_else(|| {
+            if self.handle.starts_with("UC") {
+                Some(self.handle.clone())
+            } else {
+                crate::db::Database::open()
+                    .ok()
+                    .and_then(|db| db.get_channel_by_handle(&self.handle).ok().flatten())
+                    .map(|c| c.channel_id)
+            }
+        });
+
+        if let Some(cid) = channel_id {
+            if !cid.is_empty() {
+                return format!(
+                    "https://studio.youtube.com/channel/{}/comments/inbox?filter=%5B%7B%22isDisabled%22%3Afalse%2C%22isPinned%22%3Atrue%2C%22name%22%3A%22SORT_BY%22%2C%22value%22%3A%22SORT_BY_MOST_RELEVANT%22%7D%2C%7B%22name%22%3A%22ENGAGED_STATUS%22%2C%22value%22%3A%5B%22COMMENT_CATEGORY_NOT_ENGAGED%22%2C%22COMMENT_CATEGORY_NEEDS_FOLLOW_UP%22%5D%7D%2C%7B%22name%22%3A%22PARENT_ENTITY_CONTENT_TYPE%22%2C%22value%22%3A%5B%22PARENT_ENTITY_CONTENT_TYPE_WATCH%22%2C%22PARENT_ENTITY_CONTENT_TYPE_SHORT%22%2C%22PARENT_ENTITY_CONTENT_TYPE_CREATOR_POST%22%5D%7D%5D",
+                    cid
+                );
+            }
+        }
+
+        format!(
+            "https://www.youtube.com/@{}/community",
+            self.handle.trim_start_matches('@')
+        )
+    }
+
+    pub fn approve_metric(&mut self, metric: CardMetric) {
+        match metric {
+            CardMetric::Subscribers => {
+                self.initial_subscriber_count = Some(self.subscriber_count);
+                self.sub_changed = false;
+                self.sub_changed_at = None;
+            }
+            CardMetric::Views => {
+                self.initial_views_count = Some(self.views_count);
+                self.views_changed = false;
+                self.views_changed_at = None;
+            }
+            CardMetric::Videos => {
+                self.initial_video_count = Some(self.video_count);
+                self.video_changed = false;
+                self.video_changed_at = None;
+            }
+            CardMetric::Comments => {
+                self.initial_total_comments = Some(self.total_comments);
+                self.comments_changed = false;
+                self.comments_changed_at = None;
+            }
+            CardMetric::Likes => {
+                self.initial_total_likes = Some(self.total_likes);
+                self.likes_changed = false;
+                self.likes_changed_at = None;
+            }
+        }
     }
 }
 
@@ -1058,6 +1124,43 @@ mod tests {
 
         assert_eq!(format_compact_delta(0), "");
         assert_eq!(format_compact_delta(15000), "+15.0K");
+    }
+
+    #[test]
+    fn test_channel_data_approve_metric() {
+        let mut ch = ChannelData::new_loading("@test");
+        ch.initial_subscriber_count = Some(100);
+        ch.subscriber_count = 120;
+        ch.sub_changed = true;
+        assert_eq!(ch.delta_subscribers(), 20);
+
+        ch.approve_metric(CardMetric::Subscribers);
+        assert_eq!(ch.delta_subscribers(), 0);
+        assert!(!ch.sub_changed);
+        assert_eq!(ch.initial_subscriber_count, Some(120));
+
+        ch.initial_total_comments = Some(50);
+        ch.total_comments = 55;
+        ch.comments_changed = true;
+        ch.approve_metric(CardMetric::Comments);
+        assert_eq!(ch.delta_comments(), 0);
+        assert!(!ch.comments_changed);
+    }
+
+    #[test]
+    fn test_comments_inbox_url() {
+        let mut ch = ChannelData::new_loading("@LeonardoAnchisi");
+        ch.channel_id = Some("UC_x5XG1OV2P6uZZ5FSM9Ttw".to_string());
+        let url = ch.comments_inbox_url();
+        assert!(url.starts_with(
+            "https://studio.youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw/comments/inbox"
+        ));
+        assert!(url.contains("SORT_BY_MOST_RELEVANT"));
+        assert!(url.contains("COMMENT_CATEGORY_NOT_ENGAGED"));
+
+        let ch_fallback = ChannelData::new_loading("@LeonardoAnchisi");
+        let fallback_url = ch_fallback.comments_inbox_url();
+        assert!(fallback_url.contains("LeonardoAnchisi"));
     }
 
     #[test]
