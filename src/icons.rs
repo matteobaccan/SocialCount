@@ -283,3 +283,32 @@ pub fn draw_like_icon(painter: &Painter, rect: Rect, color: Color32) {
     painter.line_segment([p_left, bottom], stroke);
     painter.line_segment([bottom, p_right], stroke);
 }
+
+/// Draws vector collapse icon (horizontal bar) used to shrink the window into the compact widget
+pub fn draw_collapse_icon(painter: &Painter, center: Pos2, half_width: f32, color: Color32) {
+    painter.hline(
+        (center.x - half_width)..=(center.x + half_width),
+        center.y + half_width * 0.6,
+        Stroke::new(1.5_f32, color),
+    );
+}
+
+/// Draws vector expand icon (window outline) used to restore the full view
+pub fn draw_expand_icon(painter: &Painter, center: Pos2, half_size: f32, color: Color32) {
+    let rect = Rect::from_center_size(center, Vec2::splat(half_size * 2.0));
+    painter.rect_stroke(rect, 1.5_f32, Stroke::new(1.3_f32, color));
+    painter.hline(
+        rect.x_range(),
+        rect.top() + 1.0,
+        Stroke::new(1.6_f32, color),
+    );
+}
+
+/// Draws vector close icon (diagonal cross)
+pub fn draw_close_icon(painter: &Painter, center: Pos2, half_size: f32, color: Color32) {
+    let stroke = Stroke::new(1.4_f32, color);
+    let d = Vec2::splat(half_size);
+    let e = Vec2::new(half_size, -half_size);
+    painter.line_segment([center - d, center + d], stroke);
+    painter.line_segment([center - e, center + e], stroke);
+}

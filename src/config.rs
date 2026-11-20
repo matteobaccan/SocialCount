@@ -49,6 +49,9 @@ pub struct Config {
 
     #[serde(default = "default_true")]
     pub show_likes: bool,
+
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
 }
 
 fn default_true() -> bool {
@@ -95,6 +98,7 @@ impl Default for Config {
             show_videos: true,
             show_comments: true,
             show_likes: true,
+            check_updates: true,
         };
         cfg.resolve_effective_api_key();
         cfg

@@ -8,6 +8,7 @@ mod app;
 mod config;
 mod db;
 mod icons;
+mod update;
 mod youtube;
 
 use app::SocialCountApp;

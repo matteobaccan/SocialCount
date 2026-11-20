@@ -16,6 +16,9 @@ card_opacity = 190
 # Compact mode (true = compact widget, false = full view)
 compact_mode = false
 
+# Check GitHub for a newer release (default: true)
+check_updates = true
+
 # Window dimensions (width and height in logical pixels)
 window_width = 832.7
 window_height = 530.0

@@ -54,12 +54,18 @@
   - Click on any channel's avatar or the **Details** button to open a dedicated modal displaying full metrics and recent uploads (with individual views, likes, comments, and direct links to YouTube).
 - **Real-Time Change Detection**:
   - Automatically highlights counter pills with animated markers and border accents whenever subscriber, view, video, or comment counts update.
-- **Automatic Sorting by Subscribers**: Channels are dynamically ordered by subscriber count in descending order.
+- **Custom Channel Order**: Channels are displayed in the order set in the channel manager (move up / move down).
 - **Continuous Opacity Slider**:
   - Adjust background opacity in real time from **0% (completely transparent)** to **100% opaque**. At 0% opacity, all cards and backgrounds vanish, leaving only the floating circular avatars and counter pills visible.
-- **Ultra-Compact Mode (Double-Click or `--compact`)**:
-  - **Double-click anywhere on the title bar** or run with `--compact` to shrink into an ultra-compact widget: displays the circular avatar on the left and a balanced 2x2 grid with all 4 counter pills on the right.
-  - Double-click again to restore normal view.
+- **Ultra-Compact Mode (Compact button or `--compact`)**:
+  - Click the **compact button** next to the close button or run with `--compact` to shrink into an ultra-compact widget: displays the circular avatar on the left and a balanced grid with all visible counter pills on the right.
+  - The compact widget sizes itself automatically to the smallest window that still shows every channel and all of its counters.
+  - Click the **full view button** next to the close button to restore normal view.
+- **Minimal Title-Only Mode (Double-Click)**:
+  - **Double-click the title bar** (in normal or compact view) to collapse the window to its title only: YouTube icon, application name, and a blinking speech bubble whenever new comments are waiting.
+  - Double-click again, or click the restore button, to return to the previous view.
+- **Update Notice**:
+  - When a newer release is published, a clickable notice appears in the bottom-left corner of the footer and opens the download page. Set `check_updates = false` to disable the check.
 - **Dual Fetch Engine with SQLite Caching**:
   - Optional **YouTube Data API v3** support for enriched video and comment stats with embedded SQLite tiered caching (`socialcount.db`).
   - Automatic fallback to **public HTML scraping** when no API key is specified or when quota is exceeded (zero configuration required).
@@ -126,6 +132,9 @@ card_opacity = 190
 
 # Compact mode (true = compact widget, false = full view)
 compact_mode = false
+
+# Check GitHub for a newer release (default: true)
+check_updates = true
 
 # Window dimensions (width and height in logical pixels)
 window_width = 360.0

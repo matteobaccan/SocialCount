@@ -523,7 +523,7 @@
           <img src="assets/screenshot-normal.png" alt="SocialCount Normal View">
         </div>
         <div class="showcase-card">
-          <h3>Ultra-Compact Mode (Double-Click)</h3>
+          <h3>Ultra-Compact Mode (Compact Button)</h3>
           <span>Minimalist footprint: central circular avatar flanked by solid stat pills</span>
           <img src="assets/screenshot-compact.png" alt="SocialCount Compact View">
         </div>
@@ -575,7 +575,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           </div>
           <h4>Ultra-Compact Toggle</h4>
-          <p>Double-click the title bar to collapse the widget into micro mode: headers and footers fade away, leaving only the circular channel icon and counters.</p>
+          <p>Click the compact button to shrink the widget into micro mode: headers and footers fade away, leaving only the circular channel icon and counters. Double-click the title bar to collapse it further to the title only.</p>
         </div>
 
         <div class="feature-box">
@@ -637,6 +637,9 @@
 <span class="code-comment"># Compact mode (true = compact widget, false = full view)</span>
 <span class="code-key">compact_mode</span> = <span class="code-val">false</span>
 
+<span class="code-comment"># Check GitHub for a newer release (default: true)</span>
+<span class="code-key">check_updates</span> = <span class="code-val">true</span>
+
 <span class="code-comment"># Window dimensions (width and height in logical pixels)</span>
 <span class="code-key">window_width</span> = <span class="code-val">360.0</span>
 <span class="code-key">window_height</span> = <span class="code-val">440.0</span>
@@ -673,8 +676,18 @@
             </tr>
             <tr>
               <td><strong>Toggle Compact View</strong></td>
+              <td>Click <kbd>Compact</kbd> / <kbd>Full view</kbd> next to Close</td>
+              <td>Shrink into an auto-sized micro widget showing every channel and counter, or expand back to full view</td>
+            </tr>
+            <tr>
+              <td><strong>Collapse to Title</strong></td>
               <td><kbd>Double Click</kbd> on title bar</td>
-              <td>Instantly shrink into micro widget or expand back to full view</td>
+              <td>Collapse to the title only, with a blinking speech bubble when new comments arrive; double-click again to restore</td>
+            </tr>
+            <tr>
+              <td><strong>Download Update</strong></td>
+              <td>Click the notice in the footer</td>
+              <td>Shown in the bottom-left corner when a newer release is available; opens the download page</td>
             </tr>
             <tr>
               <td><strong>Channel Manager (CRUD)</strong></td>

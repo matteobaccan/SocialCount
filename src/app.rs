@@ -14,7 +14,14 @@ use std::time::{Duration, Instant};
 enum WorkerMessage {
     ChannelUpdated(Box<ChannelData>),
     RefreshFinished,
+    UpdateAvailable(String),
 }
+
+/// Fixed window size of the minimal (title-only) view
+const MINIMAL_SIZE: Vec2 = Vec2::new(172.0, 34.0);
+
+/// Interval between two checks for a newer published release
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[cfg(windows)]
 mod win32_drag {
@@ -247,6 +254,10 @@ pub struct SocialCountApp {
     last_channel_fetch: HashMap<String, Instant>,
     card_opacity: u8,
     is_compact: bool,
+    is_minimal: bool,
+    compact_content_height: Option<f32>,
+    update_available: Option<String>,
+    last_update_check: Instant,
     pre_compact_size: Option<Vec2>,
     resize_drag: Option<ResizeDragState>,
     show_profile_manager: bool,
@@ -335,6 +346,10 @@ impl SocialCountApp {
             last_channel_fetch: HashMap::new(),
             card_opacity,
             is_compact,
+            is_minimal: false,
+            compact_content_height: None,
+            update_available: None,
+            last_update_check: Instant::now(),
             pre_compact_size,
             resize_drag: None,
             show_profile_manager: false,
@@ -355,7 +370,115 @@ impl SocialCountApp {
         };
 
         app.trigger_refresh();
+        app.trigger_update_check();
         app
+    }
+
+    /// Looks for a newer published release in the background (unless disabled in the configuration)
+    fn trigger_update_check(&mut self) {
+        self.last_update_check = Instant::now();
+        if !self.config.check_updates {
+            return;
+        }
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            if let Some(tag) = crate::update::check_for_update() {
+                let _ = tx.send(WorkerMessage::UpdateAvailable(tag));
+            }
+        });
+    }
+
+    /// Metrics enabled in the configuration, in display order
+    fn visible_metrics(&self) -> Vec<CardMetric> {
+        let mut metrics = Vec::new();
+        if self.config.show_subscribers {
+            metrics.push(CardMetric::Subscribers);
+        }
+        if self.config.show_views {
+            metrics.push(CardMetric::Views);
+        }
+        if self.config.show_videos {
+            metrics.push(CardMetric::Videos);
+        }
+        if self.config.show_comments {
+            metrics.push(CardMetric::Comments);
+        }
+        if self.config.show_likes {
+            metrics.push(CardMetric::Likes);
+        }
+        metrics
+    }
+
+    /// Smallest window size that still shows every channel and all of its visible counters
+    fn compact_size(&self, ctx: &egui::Context) -> Vec2 {
+        let metrics = self.visible_metrics();
+        let box_padding = 10.0_f32;
+        let col_gap = 4.0_f32;
+
+        let mut right_w = 80.0_f32;
+        for chunk in metrics.chunks(2) {
+            let widest = self
+                .channels
+                .iter()
+                .flat_map(|ch| chunk.iter().map(move |m| (ch, *m)))
+                .map(|(ch, m)| compact_metric_content_width(ctx, m, ch))
+                .fold(0.0_f32, f32::max)
+                + box_padding;
+            let row_w = if chunk.len() == 2 {
+                widest * 2.0 + col_gap
+            } else {
+                widest
+            };
+            right_w = right_w.max(row_w);
+        }
+
+        // Panel margin + container margin + card margin (both sides), avatar and its gap
+        let chrome_w = 2.0 * (4.0 + 5.0 + 4.0) + 32.0 + 5.0;
+        let width = (chrome_w + right_w + 2.0).ceil().clamp(150.0, 900.0);
+
+        let content_h = self.compact_content_height.unwrap_or_else(|| {
+            let rows = metrics.len().div_ceil(2).max(1) as f32;
+            let card_h = (rows * 18.0 + (rows - 1.0) * 5.0).max(32.0) + 6.0;
+            15.0 + self.channels.len() as f32 * (card_h + 5.0)
+        });
+        // Panel margin + container margin (top and bottom)
+        let height = (content_h + 2.0 * (4.0 + 3.0) + 1.0)
+            .ceil()
+            .clamp(40.0, 1600.0);
+
+        Vec2::new(width, height)
+    }
+
+    /// True when new comments arrived and have not been acknowledged yet
+    fn has_new_comments(&self) -> bool {
+        self.channels.iter().any(|c| c.delta_comments() > 0)
+    }
+
+    /// Collapses the window to its title only, or restores the previous view
+    fn toggle_minimal(&mut self, ctx: &egui::Context) {
+        self.is_minimal = !self.is_minimal;
+
+        let target_size = if self.is_minimal {
+            if !self.is_compact {
+                let current_size = ctx.screen_rect().size();
+                self.pre_compact_size = Some(current_size);
+                self.config.window_width = current_size.x;
+                self.config.window_height = current_size.y;
+                let _ = self.config.save();
+            }
+            MINIMAL_SIZE
+        } else if self.is_compact {
+            self.compact_size(ctx)
+        } else {
+            self.pre_compact_size.unwrap_or_else(|| {
+                Vec2::new(
+                    self.config.window_width.max(280.0),
+                    self.config.window_height.max(160.0),
+                )
+            })
+        };
+
+        apply_window_size(ctx, target_size);
     }
 
     fn toggle_compact(&mut self, ctx: &egui::Context) {
@@ -367,10 +490,7 @@ impl SocialCountApp {
             self.pre_compact_size = Some(current_size);
             self.config.window_width = current_size.x;
             self.config.window_height = current_size.y;
-            // Calculate ultra-compact height: ~50px per channel + compact header space
-            let compact_h = (22.0 + self.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
-            let compact_w = 215.0_f32;
-            Vec2::new(compact_w, compact_h)
+            self.compact_size(ctx)
         } else {
             self.pre_compact_size.unwrap_or_else(|| {
                 Vec2::new(
@@ -380,9 +500,7 @@ impl SocialCountApp {
             })
         };
 
-        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(target_size));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(target_size));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+        apply_window_size(ctx, target_size);
 
         let _ = self.config.save();
     }
@@ -626,6 +744,9 @@ impl SocialCountApp {
 
                     sort_channels_by_config(&mut self.channels, &self.config.channels);
                 }
+                WorkerMessage::UpdateAvailable(tag) => {
+                    self.update_available = Some(tag);
+                }
                 WorkerMessage::RefreshFinished => {
                     self.is_loading = false;
                     self.last_refresh = Instant::now();
@@ -723,7 +844,16 @@ impl eframe::App for SocialCountApp {
             }
         }
 
-        if self.is_loading {
+        if self.last_update_check.elapsed() >= UPDATE_CHECK_INTERVAL {
+            self.trigger_update_check();
+        }
+
+        let is_collapsed = self.is_compact || self.is_minimal;
+
+        if self.is_minimal && self.has_new_comments() {
+            // Keep the new-comments indicator blinking smoothly
+            ctx.request_repaint_after(Duration::from_millis(60));
+        } else if self.is_loading {
             ctx.request_repaint_after(Duration::from_millis(150));
         } else {
             ctx.request_repaint_after(Duration::from_millis(500));
@@ -734,22 +864,11 @@ impl eframe::App for SocialCountApp {
             self.show_profile_manager = !self.show_profile_manager;
             self.profile_error_msg = None;
             self.editing_channel_idx = None;
-            if self.show_profile_manager {
-                if self.is_compact {
-                    let manager_size = Vec2::new(350.0, 440.0);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(manager_size));
-                }
-            } else if self.is_compact {
-                let compact_h = (22.0 + self.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
-                    215.0, compact_h,
-                )));
-            }
         }
 
         // Target size calculation and anti-ballooning stabilization across monitors
         let target_size = if self.show_profile_manager {
-            if self.is_compact {
+            if is_collapsed {
                 Vec2::new(350.0, 440.0)
             } else {
                 Vec2::new(
@@ -757,9 +876,10 @@ impl eframe::App for SocialCountApp {
                     self.config.window_height.max(420.0),
                 )
             }
+        } else if self.is_minimal {
+            MINIMAL_SIZE
         } else if self.is_compact {
-            let compact_h = (22.0 + self.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
-            Vec2::new(215.0, compact_h)
+            self.compact_size(ctx)
         } else {
             Vec2::new(
                 self.config.window_width.max(280.0),
@@ -773,7 +893,7 @@ impl eframe::App for SocialCountApp {
             if (current_size.x - target_size.x).abs() > 4.0
                 || (current_size.y - target_size.y).abs() > 4.0
             {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+                apply_window_size(ctx, target_size);
             }
         }
 
@@ -819,7 +939,7 @@ impl eframe::App for SocialCountApp {
                     }
                 };
 
-                let container_margin = if self.is_compact && !self.show_profile_manager {
+                let container_margin = if is_collapsed && !self.show_profile_manager {
                     Margin::symmetric(5.0, 3.0)
                 } else {
                     Margin::symmetric(14.0, 12.0)
@@ -830,7 +950,7 @@ impl eframe::App for SocialCountApp {
                     .stroke(container_stroke)
                     .shadow(container_shadow)
                     .rounding(Rounding::same(
-                        if self.is_compact && !self.show_profile_manager {
+                        if is_collapsed && !self.show_profile_manager {
                             8.0
                         } else {
                             18.0
@@ -840,6 +960,8 @@ impl eframe::App for SocialCountApp {
                     .show(ui, |ui| {
                         if self.show_profile_manager {
                             self.render_profile_manager(ui, ctx, alpha_factor);
+                        } else if self.is_minimal {
+                            self.render_header_minimal(ui, ctx);
                         } else if self.selected_channel_details.is_some() {
                             self.render_channel_details_view(ui, ctx, alpha_factor);
                         } else {
@@ -887,6 +1009,8 @@ impl eframe::App for SocialCountApp {
                                         ch.approve_metric(metric);
                                     }
                                 }
+                                // Measured height drives the automatic compact window size
+                                self.compact_content_height = Some(ui.min_rect().height());
                             } else {
                                 let footer_height = 26.0_f32;
                                 let scroll_height =
@@ -946,8 +1070,10 @@ impl eframe::App for SocialCountApp {
                         }
                     });
 
-                // Resize handles and grip
-                self.render_resize_handles(ui, ctx, full_rect);
+                // Resize handles and grip (collapsed views size themselves automatically)
+                if !is_collapsed || self.show_profile_manager {
+                    self.render_resize_handles(ui, ctx, full_rect);
+                }
             });
     }
 }
@@ -962,7 +1088,7 @@ impl SocialCountApp {
             ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::hover());
 
         // Dedicated drag region for the title bar that does not overlap right-aligned controls
-        let controls_w = 195.0_f32;
+        let controls_w = 199.0_f32;
         let drag_w = (total_w - controls_w).max(40.0);
         let drag_rect = Rect::from_min_size(header_rect.min, Vec2::new(drag_w, header_h));
         let drag_resp = ui.interact(
@@ -978,7 +1104,7 @@ impl SocialCountApp {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
         }
         if drag_resp.double_clicked() {
-            self.toggle_compact(ctx);
+            self.toggle_minimal(ctx);
         }
         if drag_resp.drag_started_by(egui::PointerButton::Primary)
             || drag_resp.dragged_by(egui::PointerButton::Primary)
@@ -1030,13 +1156,7 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(175, 180, 195)
             };
-            ui.painter().text(
-                close_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "✕",
-                egui::FontId::proportional(13.0),
-                close_color,
-            );
+            crate::icons::draw_close_icon(ui.painter(), close_resp.rect.center(), 3.9, close_color);
             if close_resp.clicked() {
                 if !self.is_compact {
                     let current_size = ctx.screen_rect().size();
@@ -1047,6 +1167,35 @@ impl SocialCountApp {
                 self.config.card_opacity = self.card_opacity;
                 let _ = self.config.save();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+
+            ui.add_space(2.0);
+
+            let compact_resp = ui
+                .allocate_response(Vec2::splat(22.0), egui::Sense::click())
+                .on_hover_text("Compact view");
+            let compact_hover = compact_resp.hovered();
+            if compact_hover {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                ui.painter().circle_filled(
+                    compact_resp.rect.center(),
+                    11.0,
+                    Color32::from_white_alpha(25),
+                );
+            }
+            let compact_color = if compact_hover {
+                Color32::from_rgb(220, 230, 245)
+            } else {
+                Color32::from_rgb(175, 180, 195)
+            };
+            crate::icons::draw_collapse_icon(
+                ui.painter(),
+                compact_resp.rect.center(),
+                5.0,
+                compact_color,
+            );
+            if compact_resp.clicked() {
+                self.toggle_compact(ctx);
             }
 
             ui.add_space(2.0);
@@ -1125,7 +1274,7 @@ impl SocialCountApp {
             // Background Opacity Slider
             let op_percent = ((self.card_opacity as f32 / 255.0) * 100.0).round() as u32;
             ui.horizontal(|ui| {
-                ui.spacing_mut().slider_width = 70.0_f32;
+                ui.spacing_mut().slider_width = 50.0_f32;
                 let slider = egui::Slider::new(&mut self.card_opacity, 0..=255).show_value(false);
                 let slider_resp = ui
                     .add(slider)
@@ -1153,6 +1302,7 @@ impl SocialCountApp {
     }
 
     /// Header for ultra-compact view: minimal drag handle and close button
+    /// Header for ultra-compact view: drag handle, full view and close buttons
     fn render_header_compact(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let total_w = ui.available_width();
         let header_h = 13.0_f32;
@@ -1160,7 +1310,7 @@ impl SocialCountApp {
         let (header_rect, _) =
             ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::hover());
 
-        let close_w = 20.0_f32;
+        let close_w = 36.0_f32;
         let drag_w = (total_w - close_w).max(20.0);
         let drag_rect = Rect::from_min_size(header_rect.min, Vec2::new(drag_w, header_h));
         let drag_resp = ui.interact(
@@ -1176,7 +1326,7 @@ impl SocialCountApp {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
         }
         if drag_resp.double_clicked() {
-            self.toggle_compact(ctx);
+            self.toggle_minimal(ctx);
         }
         if drag_resp.drag_started_by(egui::PointerButton::Primary)
             || drag_resp.dragged_by(egui::PointerButton::Primary)
@@ -1223,18 +1373,156 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(140, 145, 160)
             };
-            ui.painter().text(
-                close_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "✕",
-                egui::FontId::proportional(10.0),
-                close_color,
-            );
+            crate::icons::draw_close_icon(ui.painter(), close_resp.rect.center(), 3.0, close_color);
             if close_resp.clicked() {
                 self.config.compact_mode = self.is_compact;
                 self.config.card_opacity = self.card_opacity;
                 let _ = self.config.save();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+
+            let expand_resp = ui
+                .allocate_response(Vec2::splat(13.0), egui::Sense::click())
+                .on_hover_text("Full view");
+            let expand_hover = expand_resp.hovered();
+            if expand_hover {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            let expand_color = if expand_hover {
+                Color32::from_rgb(220, 230, 245)
+            } else {
+                Color32::from_rgb(140, 145, 160)
+            };
+            crate::icons::draw_expand_icon(
+                ui.painter(),
+                expand_resp.rect.center(),
+                3.5,
+                expand_color,
+            );
+            if expand_resp.clicked() {
+                self.toggle_compact(ctx);
+            }
+        });
+    }
+
+    /// Header for minimal view: logo, title, new-comments indicator, restore and close buttons
+    fn render_header_minimal(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let total_w = ui.available_width();
+        let header_h = 18.0_f32;
+
+        let (header_rect, _) =
+            ui.allocate_exact_size(Vec2::new(total_w, header_h), egui::Sense::hover());
+
+        let controls_w = 36.0_f32;
+        let drag_w = (total_w - controls_w).max(20.0);
+        let drag_rect = Rect::from_min_size(header_rect.min, Vec2::new(drag_w, header_h));
+        let drag_resp = ui.interact(
+            drag_rect,
+            ui.id().with("minimal_drag"),
+            egui::Sense::click_and_drag(),
+        );
+
+        if drag_resp.hovered() {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grab);
+        }
+        if drag_resp.dragged() {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
+        }
+        if drag_resp.double_clicked() {
+            self.toggle_minimal(ctx);
+        }
+        if drag_resp.drag_started_by(egui::PointerButton::Primary)
+            || drag_resp.dragged_by(egui::PointerButton::Primary)
+        {
+            #[cfg(windows)]
+            self.start_win32_drag();
+            #[cfg(not(windows))]
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
+        let logo_rect = Rect::from_center_size(
+            Pos2::new(header_rect.min.x + 10.0, header_rect.center().y),
+            Vec2::new(15.0, 10.5),
+        );
+        crate::icons::draw_youtube_icon(ui.painter(), logo_rect);
+
+        let title_pos = Pos2::new(header_rect.min.x + 24.0, header_rect.center().y);
+        let title_rect = ui.painter().text(
+            title_pos,
+            egui::Align2::LEFT_CENTER,
+            "SocialCount",
+            egui::FontId::proportional(12.5),
+            Color32::from_rgb(255, 255, 255),
+        );
+
+        // Blinking speech bubble while there are unacknowledged new comments
+        if self.has_new_comments() {
+            let bubble_rect = Rect::from_center_size(
+                Pos2::new(title_rect.max.x + 12.0, header_rect.center().y + 1.0),
+                Vec2::splat(15.0),
+            );
+            let time_now = ui.input(|i| i.time);
+            let pulse = ((time_now * 4.0).sin() * 0.5 + 0.5) as f32;
+            let alpha = (60.0 + 195.0 * pulse).round() as u8;
+            crate::icons::draw_comment_icon(
+                ui.painter(),
+                bubble_rect,
+                Color32::from_rgba_unmultiplied(251, 146, 60, alpha),
+            );
+            ui.interact(
+                bubble_rect,
+                ui.id().with("minimal_new_comments"),
+                egui::Sense::hover(),
+            )
+            .on_hover_text("New comments received");
+        }
+
+        let mut header_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(header_rect)
+                .layout(*ui.layout()),
+        );
+        header_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let close_resp = ui
+                .allocate_response(Vec2::splat(14.0), egui::Sense::click())
+                .on_hover_text("Close");
+            let close_hover = close_resp.hovered();
+            if close_hover {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            let close_color = if close_hover {
+                Color32::from_rgb(248, 113, 113)
+            } else {
+                Color32::from_rgb(140, 145, 160)
+            };
+            crate::icons::draw_close_icon(ui.painter(), close_resp.rect.center(), 3.3, close_color);
+            if close_resp.clicked() {
+                self.config.compact_mode = self.is_compact;
+                self.config.card_opacity = self.card_opacity;
+                let _ = self.config.save();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+
+            let restore_resp = ui
+                .allocate_response(Vec2::splat(14.0), egui::Sense::click())
+                .on_hover_text("Restore view");
+            let restore_hover = restore_resp.hovered();
+            if restore_hover {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            let restore_color = if restore_hover {
+                Color32::from_rgb(220, 230, 245)
+            } else {
+                Color32::from_rgb(140, 145, 160)
+            };
+            crate::icons::draw_expand_icon(
+                ui.painter(),
+                restore_resp.rect.center(),
+                4.0,
+                restore_color,
+            );
+            if restore_resp.clicked() {
+                self.toggle_minimal(ctx);
             }
         });
     }
@@ -1260,7 +1548,51 @@ impl SocialCountApp {
         let dot_radius = 3.5_f32;
         let center_content_w = (dot_radius * 2.0) + dot_spacing + text_galley.size().x;
 
-        let start_x = footer_rect.center().x - (center_content_w / 2.0);
+        // Bottom left: notice shown when a newer release has been published
+        let mut left_end_x = footer_rect.min.x;
+        if let Some(tag) = &self.update_available {
+            let notice_str = format!("{} available", tag);
+            let notice_font = egui::FontId::proportional(10.5);
+            let notice_galley = ui.fonts(|f| {
+                f.layout_no_wrap(notice_str.clone(), notice_font.clone(), Color32::WHITE)
+            });
+            let notice_rect = Rect::from_min_size(
+                Pos2::new(
+                    footer_rect.min.x + 10.0,
+                    footer_rect.center().y - notice_galley.size().y / 2.0,
+                ),
+                notice_galley.size(),
+            );
+            let notice_resp = ui
+                .interact(
+                    notice_rect.expand(2.0),
+                    egui::Id::new("app_update_notice"),
+                    egui::Sense::click(),
+                )
+                .on_hover_text(format!(
+                    "SocialCount {} is available. Click to open the download page",
+                    tag
+                ));
+            let notice_color = if notice_resp.hovered() {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                Color32::from_rgb(253, 224, 71)
+            } else {
+                Color32::from_rgb(251, 191, 36)
+            };
+            painter.text(
+                notice_rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                notice_str,
+                notice_font,
+                notice_color,
+            );
+            if notice_resp.clicked() {
+                let _ = open::that(crate::update::RELEASES_URL);
+            }
+            left_end_x = notice_rect.max.x + 8.0;
+        }
+
+        let start_x = (footer_rect.center().x - (center_content_w / 2.0)).max(left_end_x);
         let dot_pos = Pos2::new(start_x + dot_radius, footer_rect.center().y);
         crate::icons::draw_live_dot(painter, dot_pos, self.is_loading, time_now);
 
@@ -1392,7 +1724,7 @@ impl SocialCountApp {
                 let current_size = ctx.screen_rect().size();
                 ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(current_size));
                 ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(current_size));
-                if !self.is_compact {
+                if !self.is_compact && !self.is_minimal {
                     self.config.window_width = current_size.x;
                     self.config.window_height = current_size.y;
                     self.pre_compact_size = Some(current_size);
@@ -1419,7 +1751,7 @@ impl SocialCountApp {
                 };
 
                 let new_size = Vec2::new(new_w, new_h);
-                if !self.is_compact {
+                if !self.is_compact && !self.is_minimal {
                     self.pre_compact_size = Some(new_size);
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
@@ -1794,22 +2126,7 @@ impl SocialCountApp {
                 });
 
                 // --- STATS ON THE RIGHT (CONFIGURABLE) ---
-                let mut visible_metrics = Vec::new();
-                if self.config.show_subscribers {
-                    visible_metrics.push(CardMetric::Subscribers);
-                }
-                if self.config.show_views {
-                    visible_metrics.push(CardMetric::Views);
-                }
-                if self.config.show_videos {
-                    visible_metrics.push(CardMetric::Videos);
-                }
-                if self.config.show_comments {
-                    visible_metrics.push(CardMetric::Comments);
-                }
-                if self.config.show_likes {
-                    visible_metrics.push(CardMetric::Likes);
-                }
+                let visible_metrics = self.visible_metrics();
 
                 let right_w = ui.available_width().max(80.0);
                 let col_gap = 4.0_f32;
@@ -1922,22 +2239,10 @@ impl SocialCountApp {
             } else {
                 Color32::from_rgb(175, 180, 195)
             };
-            ui.painter().text(
-                close_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "✕",
-                egui::FontId::proportional(13.0),
-                close_color,
-            );
+            crate::icons::draw_close_icon(ui.painter(), close_resp.rect.center(), 3.9, close_color);
             if close_resp.clicked() {
                 self.show_profile_manager = false;
                 self.editing_channel_idx = None;
-                if self.is_compact {
-                    let compact_h = (22.0 + self.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
-                        215.0, compact_h,
-                    )));
-                }
             }
         });
 
@@ -2329,13 +2634,6 @@ impl SocialCountApp {
                 if done_btn.clicked() {
                     self.show_profile_manager = false;
                     self.editing_channel_idx = None;
-                    if self.is_compact {
-                        let compact_h =
-                            (22.0 + self.channels.len() as f32 * 50.0).clamp(60.0, 500.0);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
-                            215.0, compact_h,
-                        )));
-                    }
                 }
             });
         });
@@ -3682,6 +3980,81 @@ fn show_comments_metric_tooltip(
             }
         });
     });
+}
+
+/// Applies a fixed window size (the window is not user-resizable outside the custom grips)
+fn apply_window_size(ctx: &egui::Context, size: Vec2) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(size));
+    ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+}
+
+/// Value and delta shown by a compact counter pill, with the width of its icon
+fn compact_metric_parts(metric: CardMetric, channel: &ChannelData) -> (String, i64, f32) {
+    let count_or_dash = |count: u64| {
+        if count > 0 {
+            crate::youtube::clean_stat_number(&count.to_string())
+        } else {
+            "-".to_string()
+        }
+    };
+    match metric {
+        CardMetric::Subscribers => (
+            crate::youtube::clean_stat_number(&channel.subscriber_text),
+            channel.delta_subscribers(),
+            11.0,
+        ),
+        CardMetric::Views => (
+            crate::youtube::clean_stat_number(&channel.views_text),
+            channel.delta_views(),
+            12.0,
+        ),
+        CardMetric::Videos => {
+            let text = if channel.video_count > 0 {
+                crate::youtube::clean_stat_number(&channel.video_count.to_string())
+            } else {
+                crate::youtube::clean_stat_number(&channel.video_count_text)
+            };
+            (text, channel.delta_video_count(), 11.0)
+        }
+        CardMetric::Comments => (
+            count_or_dash(channel.total_comments),
+            channel.delta_comments(),
+            11.0,
+        ),
+        CardMetric::Likes => (
+            count_or_dash(channel.total_likes),
+            channel.delta_likes(),
+            11.0,
+        ),
+    }
+}
+
+/// Width needed by the content of a compact counter pill (icon, value, marker and delta)
+fn compact_metric_content_width(
+    ctx: &egui::Context,
+    metric: CardMetric,
+    channel: &ChannelData,
+) -> f32 {
+    let (text, delta, icon_w) = compact_metric_parts(metric, channel);
+    let item_gap = 3.0_f32;
+    let text_w = ctx.fonts(|f| {
+        f.layout_no_wrap(text, egui::FontId::proportional(11.0), Color32::WHITE)
+            .size()
+            .x
+    });
+    let delta_str = crate::youtube::format_compact_delta(delta);
+    let delta_w = if delta_str.is_empty() {
+        0.0
+    } else {
+        ctx.fonts(|f| {
+            f.layout_no_wrap(delta_str, egui::FontId::proportional(9.0), Color32::WHITE)
+                .size()
+                .x
+        }) + 3.0
+    };
+    let circle_w = if delta > 0 { 8.0 } else { 0.0 };
+    icon_w + item_gap + text_w + circle_w + delta_w
 }
 
 /// Reorders the displayed channels to follow the order configured by the user.
