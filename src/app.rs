@@ -2230,7 +2230,8 @@ impl SocialCountApp {
     fn render_profile_manager(
         &mut self,
         ui: &mut egui::Ui,
-        ctx: &egui::Context,
+        // Only needed for the native window drag on non-Windows platforms
+        #[cfg_attr(windows, allow(unused_variables))] ctx: &egui::Context,
         alpha_factor: f32,
     ) {
         let total_w = ui.available_width();
