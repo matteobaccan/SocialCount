@@ -54,6 +54,9 @@
   - Click on any channel's avatar or the **Details** button to open a dedicated modal displaying full metrics and recent uploads (with individual views, likes, comments, and direct links to YouTube).
 - **Real-Time Change Detection**:
   - Automatically highlights counter pills with animated markers and border accents whenever subscriber, view, video, or comment counts update.
+- **Per-Video Change Indicators**:
+  - In the channel details table, every video that received new views, likes, or comments since launch shows a `+N` indicator next to the value. Double-click the matching channel counter to acknowledge the change and clear the indicators.
+- **Comments in Evidence**: With all counters visible, the comments pill takes the full-width row of each card so new messages are easier to spot.
 - **Custom Channel Order**: Channels are displayed in the order set in the channel manager (move up / move down).
 - **Continuous Opacity Slider**:
   - Adjust background opacity in real time from **0% (completely transparent)** to **100% opaque**. At 0% opacity, all cards and backgrounds vanish, leaving only the floating circular avatars and counter pills visible.

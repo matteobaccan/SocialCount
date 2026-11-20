@@ -5,7 +5,7 @@
 use crate::config::Config;
 use crate::youtube::{ChannelData, YouTubeFetcher};
 use eframe::egui::{self, Color32, Margin, Pos2, Rect, Rounding, Stroke, Vec2};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -15,6 +15,14 @@ enum WorkerMessage {
     ChannelUpdated(Box<ChannelData>),
     RefreshFinished,
     UpdateAvailable(String),
+}
+
+/// Per-video counters recorded at launch (or at the last acknowledgment)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VideoBaseline {
+    pub views: u64,
+    pub likes: u64,
+    pub comments: u64,
 }
 
 /// Fixed window size of the minimal (title-only) view
@@ -258,6 +266,8 @@ pub struct SocialCountApp {
     compact_content_height: Option<f32>,
     update_available: Option<String>,
     last_update_check: Instant,
+    video_baselines: HashMap<String, VideoBaseline>,
+    baselined_channels: HashSet<String>,
     pre_compact_size: Option<Vec2>,
     resize_drag: Option<ResizeDragState>,
     show_profile_manager: bool,
@@ -350,6 +360,8 @@ impl SocialCountApp {
             compact_content_height: None,
             update_available: None,
             last_update_check: Instant::now(),
+            video_baselines: HashMap::new(),
+            baselined_channels: HashSet::new(),
             pre_compact_size,
             resize_drag: None,
             show_profile_manager: false,
@@ -368,6 +380,15 @@ impl SocialCountApp {
             #[cfg(windows)]
             win32_drag_state: None,
         };
+
+        let cached_channel_ids: Vec<String> = app
+            .channels
+            .iter()
+            .filter_map(|c| c.channel_id.clone())
+            .collect();
+        for channel_id in cached_channel_ids {
+            app.sync_video_baselines(&channel_id);
+        }
 
         app.trigger_refresh();
         app.trigger_update_check();
@@ -388,6 +409,61 @@ impl SocialCountApp {
         });
     }
 
+    /// Records the launch-time counters of the videos of a channel that are not tracked yet
+    fn sync_video_baselines(&mut self, channel_id: &str) {
+        let Ok(db) = crate::db::Database::open() else {
+            return;
+        };
+        let Ok(videos) = db.get_all_videos(channel_id) else {
+            return;
+        };
+        if videos.is_empty() {
+            return;
+        }
+        let channel_known = self.baselined_channels.contains(channel_id);
+        record_video_baselines(&mut self.video_baselines, &videos, channel_known);
+        self.baselined_channels.insert(channel_id.to_string());
+    }
+
+    /// Acknowledges the changes of a channel metric, including the per-video indicators
+    fn approve_channel_metric(&mut self, handle: &str, metric: CardMetric) {
+        let Some(ch) = self.channels.iter_mut().find(|c| c.handle == handle) else {
+            return;
+        };
+        ch.approve_metric(metric);
+
+        if !matches!(
+            metric,
+            CardMetric::Views | CardMetric::Likes | CardMetric::Comments
+        ) {
+            return;
+        }
+        let known_channel_id = ch.channel_id.clone();
+        let Ok(db) = crate::db::Database::open() else {
+            return;
+        };
+        let channel_id = known_channel_id.or_else(|| {
+            db.get_channel_by_handle(handle)
+                .ok()
+                .flatten()
+                .map(|cached| cached.channel_id)
+        });
+        let Some(channel_id) = channel_id else {
+            return;
+        };
+        if let Ok(videos) = db.get_all_videos(&channel_id) {
+            for v in &videos {
+                let baseline = self.video_baselines.entry(v.video_id.clone()).or_default();
+                match metric {
+                    CardMetric::Views => baseline.views = v.views,
+                    CardMetric::Likes => baseline.likes = v.likes,
+                    CardMetric::Comments => baseline.comments = v.comments,
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Metrics enabled in the configuration, in display order
     fn visible_metrics(&self) -> Vec<CardMetric> {
         let mut metrics = Vec::new();
@@ -400,11 +476,12 @@ impl SocialCountApp {
         if self.config.show_videos {
             metrics.push(CardMetric::Videos);
         }
-        if self.config.show_comments {
-            metrics.push(CardMetric::Comments);
-        }
+        // Comments come last: with every metric visible they get the full-width row
         if self.config.show_likes {
             metrics.push(CardMetric::Likes);
+        }
+        if self.config.show_comments {
+            metrics.push(CardMetric::Comments);
         }
         metrics
     }
@@ -551,6 +628,7 @@ impl SocialCountApp {
             match msg {
                 WorkerMessage::ChannelUpdated(new_data_box) => {
                     let mut new_data = *new_data_box;
+                    let updated_channel_id = new_data.channel_id.clone();
                     self.last_channel_fetch
                         .insert(new_data.handle.clone(), Instant::now());
                     if let Some(bytes) = &new_data.avatar_bytes {
@@ -743,6 +821,9 @@ impl SocialCountApp {
                     }
 
                     sort_channels_by_config(&mut self.channels, &self.config.channels);
+                    if let Some(channel_id) = updated_channel_id {
+                        self.sync_video_baselines(&channel_id);
+                    }
                 }
                 WorkerMessage::UpdateAvailable(tag) => {
                     self.update_available = Some(tag);
@@ -1003,11 +1084,7 @@ impl eframe::App for SocialCountApp {
                                     ui.add_space(2.0);
                                 }
                                 if let Some((handle, metric)) = to_approve {
-                                    if let Some(ch) =
-                                        self.channels.iter_mut().find(|c| c.handle == handle)
-                                    {
-                                        ch.approve_metric(metric);
-                                    }
+                                    self.approve_channel_metric(&handle, metric);
                                 }
                                 // Measured height drives the automatic compact window size
                                 self.compact_content_height = Some(ui.min_rect().height());
@@ -1034,13 +1111,7 @@ impl eframe::App for SocialCountApp {
                                             ui.add_space(8.0);
                                         }
                                         if let Some((handle, metric)) = to_approve {
-                                            if let Some(ch) = self
-                                                .channels
-                                                .iter_mut()
-                                                .find(|c| c.handle == handle)
-                                            {
-                                                ch.approve_metric(metric);
-                                            }
+                                            self.approve_channel_metric(&handle, metric);
                                         }
                                         if let Some(h) = clicked {
                                             self.selected_channel_details = Some(h);
@@ -1968,22 +2039,7 @@ impl SocialCountApp {
                     let gap = 8.0_f32;
                     let box_h = 28.0_f32;
 
-                    let mut visible_metrics = Vec::new();
-                    if self.config.show_subscribers {
-                        visible_metrics.push(CardMetric::Subscribers);
-                    }
-                    if self.config.show_views {
-                        visible_metrics.push(CardMetric::Views);
-                    }
-                    if self.config.show_videos {
-                        visible_metrics.push(CardMetric::Videos);
-                    }
-                    if self.config.show_comments {
-                        visible_metrics.push(CardMetric::Comments);
-                    }
-                    if self.config.show_likes {
-                        visible_metrics.push(CardMetric::Likes);
-                    }
+                    let visible_metrics = self.visible_metrics();
 
                     for (row_idx, chunk) in visible_metrics.chunks(2).enumerate() {
                         if row_idx > 0 {
@@ -2999,9 +3055,7 @@ impl SocialCountApp {
                 });
 
                 if let Some(m) = approve_metric {
-                    if let Some(ch) = self.channels.iter_mut().find(|c| c.handle == handle) {
-                        ch.approve_metric(m);
-                    }
+                    self.approve_channel_metric(&handle, m);
                 }
 
                 if let Some((msg, time)) = &self.export_notification {
@@ -3081,9 +3135,24 @@ impl SocialCountApp {
                     let table_w = ui.available_width().max(350.0);
                     let type_w = 44.0_f32;
                     let age_w = 48.0_f32;
-                    let views_w = 46.0_f32;
-                    let likes_w = 44.0_f32;
-                    let comments_w = 40.0_f32;
+                    // Columns grow to make room for the per-video change indicators
+                    let delta_font = egui::FontId::proportional(9.0);
+                    let mut views_delta_w = 0.0_f32;
+                    let mut likes_delta_w = 0.0_f32;
+                    let mut comments_delta_w = 0.0_f32;
+                    for v in &videos {
+                        let (dv, dl, dc) =
+                            video_deltas(self.video_baselines.get(&v.video_id), v);
+                        views_delta_w =
+                            views_delta_w.max(video_delta_width(ui, dv, delta_font.clone()));
+                        likes_delta_w =
+                            likes_delta_w.max(video_delta_width(ui, dl, delta_font.clone()));
+                        comments_delta_w =
+                            comments_delta_w.max(video_delta_width(ui, dc, delta_font.clone()));
+                    }
+                    let views_w = 46.0_f32 + views_delta_w;
+                    let likes_w = 44.0_f32 + likes_delta_w;
+                    let comments_w = 40.0_f32 + comments_delta_w;
                     let col_gap = 4.0_f32;
                     let pad_x = 6.0_f32;
                     let metrics_w =
@@ -3543,6 +3612,9 @@ impl SocialCountApp {
                                     Color32::from_rgb(148, 163, 184),
                                 );
 
+                                let (delta_views, delta_likes, delta_comments) =
+                                    video_deltas(self.video_baselines.get(&v.video_id), v);
+
                                 // Views Cell
                                 let views_str = format_compact_metric(v.views);
                                 let views_fmt =
@@ -3552,7 +3624,11 @@ impl SocialCountApp {
                                     ui.id().with(("v_views_h", &v.video_id)),
                                     egui::Sense::hover(),
                                 )
-                                .on_hover_text(format!("{} views", views_fmt));
+                                .on_hover_text(format!(
+                                    "{} views{}",
+                                    views_fmt,
+                                    video_delta_tooltip(delta_views)
+                                ));
                                 let views_galley = ui.fonts(|f| {
                                     f.layout_no_wrap(
                                         views_str,
@@ -3561,8 +3637,17 @@ impl SocialCountApp {
                                     )
                                 });
                                 let views_pos = Pos2::new(
-                                    views_cell_rect.right() - views_galley.size().x - 2.0,
+                                    views_cell_rect.right() - views_galley.size().x - 2.0 - views_delta_w,
                                     views_cell_rect.center().y - views_galley.size().y * 0.5,
+                                );
+                                paint_video_delta(
+                                    ui,
+                                    Pos2::new(
+                                        views_cell_rect.right() - 2.0 - views_delta_w,
+                                        views_cell_rect.center().y,
+                                    ),
+                                    delta_views,
+                                    delta_font.clone(),
                                 );
                                 ui.painter().galley(
                                     views_pos,
@@ -3579,7 +3664,11 @@ impl SocialCountApp {
                                     ui.id().with(("v_likes_h", &v.video_id)),
                                     egui::Sense::hover(),
                                 )
-                                .on_hover_text(format!("{} likes", likes_fmt));
+                                .on_hover_text(format!(
+                                    "{} likes{}",
+                                    likes_fmt,
+                                    video_delta_tooltip(delta_likes)
+                                ));
                                 let likes_galley = ui.fonts(|f| {
                                     f.layout_no_wrap(
                                         likes_str,
@@ -3588,8 +3677,17 @@ impl SocialCountApp {
                                     )
                                 });
                                 let likes_pos = Pos2::new(
-                                    likes_cell_rect.right() - likes_galley.size().x - 2.0,
+                                    likes_cell_rect.right() - likes_galley.size().x - 2.0 - likes_delta_w,
                                     likes_cell_rect.center().y - likes_galley.size().y * 0.5,
+                                );
+                                paint_video_delta(
+                                    ui,
+                                    Pos2::new(
+                                        likes_cell_rect.right() - 2.0 - likes_delta_w,
+                                        likes_cell_rect.center().y,
+                                    ),
+                                    delta_likes,
+                                    delta_font.clone(),
                                 );
                                 ui.painter().galley(
                                     likes_pos,
@@ -3617,7 +3715,11 @@ impl SocialCountApp {
                                     ui.id().with(("v_comms_h", &v.video_id)),
                                     egui::Sense::hover(),
                                 )
-                                .on_hover_text(comms_tooltip);
+                                .on_hover_text(format!(
+                                    "{}{}",
+                                    comms_tooltip,
+                                    video_delta_tooltip(delta_comments)
+                                ));
                                 let comms_galley = ui.fonts(|f| {
                                     f.layout_no_wrap(
                                         comms_str,
@@ -3626,8 +3728,17 @@ impl SocialCountApp {
                                     )
                                 });
                                 let comms_pos = Pos2::new(
-                                    comms_cell_rect.right() - comms_galley.size().x - 2.0,
+                                    comms_cell_rect.right() - comms_galley.size().x - 2.0 - comments_delta_w,
                                     comms_cell_rect.center().y - comms_galley.size().y * 0.5,
+                                );
+                                paint_video_delta(
+                                    ui,
+                                    Pos2::new(
+                                        comms_cell_rect.right() - 2.0 - comments_delta_w,
+                                        comms_cell_rect.center().y,
+                                    ),
+                                    delta_comments,
+                                    delta_font.clone(),
                                 );
                                 ui.painter().galley(
                                     comms_pos,
@@ -3980,6 +4091,88 @@ fn show_comments_metric_tooltip(
             }
         });
     });
+}
+
+/// Records a baseline for every video that has none yet. Videos of a channel that is already
+/// tracked are new arrivals, so all of their counters count as new activity.
+pub fn record_video_baselines(
+    baselines: &mut HashMap<String, VideoBaseline>,
+    videos: &[crate::db::CachedVideo],
+    channel_known: bool,
+) {
+    for v in videos {
+        baselines
+            .entry(v.video_id.clone())
+            .or_insert(if channel_known {
+                VideoBaseline::default()
+            } else {
+                VideoBaseline {
+                    views: v.views,
+                    likes: v.likes,
+                    comments: v.comments,
+                }
+            });
+    }
+}
+
+/// Changes of views, likes and comments of a video since its baseline
+pub fn video_deltas(
+    baseline: Option<&VideoBaseline>,
+    video: &crate::db::CachedVideo,
+) -> (i64, i64, i64) {
+    match baseline {
+        Some(b) => (
+            video.views as i64 - b.views as i64,
+            video.likes as i64 - b.likes as i64,
+            video.comments as i64 - b.comments as i64,
+        ),
+        None => (0, 0, 0),
+    }
+}
+
+/// Column space needed by a per-video change indicator (zero when unchanged)
+fn video_delta_width(ui: &egui::Ui, delta: i64, font_id: egui::FontId) -> f32 {
+    let delta_str = crate::youtube::format_compact_delta(delta);
+    if delta_str.is_empty() {
+        return 0.0;
+    }
+    ui.fonts(|f| {
+        f.layout_no_wrap(delta_str, font_id, Color32::WHITE)
+            .size()
+            .x
+    }) + 3.0
+}
+
+/// Paints a per-video change indicator starting right after the value that ends at `value_end`
+fn paint_video_delta(ui: &egui::Ui, value_end: Pos2, delta: i64, font_id: egui::FontId) {
+    let delta_str = crate::youtube::format_compact_delta(delta);
+    if delta_str.is_empty() {
+        return;
+    }
+    let color = if delta > 0 {
+        Color32::from_rgb(252, 165, 165)
+    } else {
+        Color32::from_rgb(253, 186, 116)
+    };
+    ui.painter().text(
+        Pos2::new(value_end.x + 3.0, value_end.y),
+        egui::Align2::LEFT_CENTER,
+        delta_str,
+        font_id,
+        color,
+    );
+}
+
+/// Tooltip suffix describing a per-video change
+fn video_delta_tooltip(delta: i64) -> String {
+    if delta == 0 {
+        String::new()
+    } else {
+        format!(
+            "\nSince launch: {:+}\nDouble-click the channel counter to acknowledge",
+            delta
+        )
+    }
 }
 
 /// Applies a fixed window size (the window is not user-resizable outside the custom grips)
@@ -5501,6 +5694,29 @@ mod tests {
         assert_eq!(format_compact_metric(150000), "150.0K");
         assert_eq!(format_compact_metric(1200000), "1.2M");
         assert_eq!(format_compact_metric(2500000000), "2.5B");
+    }
+
+    #[test]
+    fn test_video_baselines_and_deltas() {
+        let mut baselines = HashMap::new();
+        let mut first = sample_video("a", "First", 1, 100, 10, 5, false);
+        // Channel seen for the first time: current counters become the baseline
+        record_video_baselines(&mut baselines, std::slice::from_ref(&first), false);
+        assert_eq!(video_deltas(baselines.get("a"), &first), (0, 0, 0));
+
+        first.views = 130;
+        first.likes = 12;
+        first.comments = 4;
+        record_video_baselines(&mut baselines, std::slice::from_ref(&first), true);
+        assert_eq!(video_deltas(baselines.get("a"), &first), (30, 2, -1));
+
+        // A video published while the channel is tracked counts entirely as new activity
+        let second = sample_video("b", "Second", 2, 7, 3, 1, false);
+        record_video_baselines(&mut baselines, std::slice::from_ref(&second), true);
+        assert_eq!(video_deltas(baselines.get("b"), &second), (7, 3, 1));
+
+        // Untracked videos never show a change
+        assert_eq!(video_deltas(None, &second), (0, 0, 0));
     }
 
     #[test]
