@@ -45,7 +45,7 @@ Every Rust source file (`src/**/*.rs`, `examples/**/*.rs`) **MUST** start with t
 │   └── workflows/
 │       ├── build.yml         # CI check: formats, clippy, unit tests across OS targets
 │       ├── pages.yml         # Continuous deployment for docs/ to GitHub Pages
-│       └── release.yml       # Automated multi-platform release on tag push (v*)
+│       └── release.yml       # Automated tag creation and multi-platform release (manual run or v* tag push)
 ├── assets/
 │   ├── icons/                # Vector SVG icons used across documentation and web pages
 │   └── ...                   # Application logos, banners, and preview screenshots
@@ -131,15 +131,17 @@ To perform a new release (e.g., `1.1.0`):
    ```powershell
    git commit -am "Release 1.1.0"
    ```
-4. **Create a matching annotated Git tag**:
+4. **Push the commit to `main`**:
    ```powershell
-   git tag -a v1.1.0 -m "Release v1.1.0"
+   git push origin main
    ```
-   *Note: The tag must start with `v` and match the exact version in `Cargo.toml`.*
-5. **Push commit and tags to remote**:
+5. **Start the Release workflow** on the `main` branch, leaving the `tag` input empty:
    ```powershell
-   git push origin main --tags
+   gh workflow run Release --ref main
    ```
+   The workflow creates the annotated tag `vX.Y.Z` from the version in `Cargo.toml` and publishes the release. It can also be started from the GitHub web UI (Actions > Release > Run workflow).
+
+   *Alternative: create and push the tag manually (`git tag -a v1.1.0 -m "Release v1.1.0"` then `git push origin v1.1.0`); the tag push starts the same workflow. The tag must start with `v` and match the exact version in `Cargo.toml`.*
 6. **Verify the workflow execution**:
    ```powershell
    gh run list --workflow Release --limit 1

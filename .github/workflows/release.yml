@@ -1,40 +1,96 @@
 name: Release
 
-# Triggered by pushing a version tag, e.g.:
-#   git tag v0.1.0 && git push origin v0.1.0
+# Builds the cross-platform binaries and publishes a GitHub release.
+#
+# Two ways to start it:
+#   1. Run it manually (Actions > Release > Run workflow) on the main branch,
+#      leaving "tag" empty: the tag vX.Y.Z is created from the version in
+#      Cargo.toml and the release is published.
+#   2. Push a version tag yourself, e.g.:
+#        git tag -a v0.1.0 -m "Release v0.1.0" && git push origin v0.1.0
+#
+# Running it manually with an existing tag rebuilds and republishes that tag.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)publish, e.g. v0.1.0"
-        required: true
+        description: "Tag to publish, e.g. v0.1.0 (empty = v + version in Cargo.toml, created if missing)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  verify-version:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.TAG }}
-      - name: Does tag match Cargo.toml?
+
+      - name: Resolve, verify and create the tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"(.*)"/\1/')
+          cargo_version() {
+            grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"(.*)"/\1/'
+          }
+
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v$(cargo_version)"
+          fi
+
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid tag '$TAG' (expected vX.Y.Z)"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            tag_exists=true
+            git fetch --depth 1 origin "refs/tags/$TAG"
+            git checkout -q FETCH_HEAD
+          else
+            tag_exists=false
+            if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              echo "::error::Tag $TAG does not exist yet: run the workflow on $DEFAULT_BRANCH to create it"
+              exit 1
+            fi
+          fi
+
+          version=$(cargo_version)
           if [ "v$version" != "$TAG" ]; then
             echo "::error::Tag $TAG does not match version in Cargo.toml (v$version)"
             exit 1
           fi
 
+          if [ "$tag_exists" = "false" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created tag $TAG at $(git rev-parse --short HEAD)"
+          else
+            echo "Using existing tag $TAG"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build:
-    needs: verify-version
+    needs: prepare
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +167,9 @@ jobs:
           path: ${{ env.ARCHIVE }}
 
   publish:
-    needs: build
+    needs: [prepare, build]
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
