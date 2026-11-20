@@ -624,8 +624,7 @@ impl SocialCountApp {
                         self.channels.push(new_data);
                     }
 
-                    self.channels
-                        .sort_by_key(|a| std::cmp::Reverse(a.subscriber_count));
+                    sort_channels_by_config(&mut self.channels, &self.config.channels);
                 }
                 WorkerMessage::RefreshFinished => {
                     self.is_loading = false;
@@ -2247,11 +2246,13 @@ impl SocialCountApp {
         if let Some(idx) = to_move_up_idx {
             self.config.channels.swap(idx, idx - 1);
             let _ = self.config.save();
+            sort_channels_by_config(&mut self.channels, &self.config.channels);
         }
 
         if let Some(idx) = to_move_down_idx {
             self.config.channels.swap(idx, idx + 1);
             let _ = self.config.save();
+            sort_channels_by_config(&mut self.channels, &self.config.channels);
         }
 
         if let Some(idx) = to_delete_idx {
@@ -3680,6 +3681,17 @@ fn show_comments_metric_tooltip(
                 );
             }
         });
+    });
+}
+
+/// Reorders the displayed channels to follow the order configured by the user.
+/// Channels missing from the configuration keep their relative order at the end.
+pub fn sort_channels_by_config(channels: &mut [ChannelData], order: &[String]) {
+    channels.sort_by_key(|ch| {
+        order
+            .iter()
+            .position(|h| h.eq_ignore_ascii_case(&ch.handle))
+            .unwrap_or(usize::MAX)
     });
 }
 
@@ -5116,6 +5128,30 @@ mod tests {
         assert_eq!(format_compact_metric(150000), "150.0K");
         assert_eq!(format_compact_metric(1200000), "1.2M");
         assert_eq!(format_compact_metric(2500000000), "2.5B");
+    }
+
+    #[test]
+    fn test_sort_channels_by_config() {
+        let mut channels = vec![
+            ChannelData::new_loading("@extra"),
+            ChannelData::new_loading("@beta"),
+            ChannelData::new_loading("@gamma"),
+            ChannelData::new_loading("@alpha"),
+        ];
+        // Subscriber counts must not influence the configured order
+        channels[1].subscriber_count = 10;
+        channels[2].subscriber_count = 1000;
+        channels[3].subscriber_count = 100;
+
+        let order = vec![
+            "@alpha".to_string(),
+            "@Beta".to_string(),
+            "@gamma".to_string(),
+        ];
+        sort_channels_by_config(&mut channels, &order);
+
+        let handles: Vec<&str> = channels.iter().map(|c| c.handle.as_str()).collect();
+        assert_eq!(handles, vec!["@alpha", "@beta", "@gamma", "@extra"]);
     }
 
     #[test]
